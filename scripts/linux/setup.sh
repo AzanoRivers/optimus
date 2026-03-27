@@ -30,7 +30,7 @@ ENV_FILE=".env"
 
 SERVICE_NAME="optimus-api"                                       # ← change to your preferred service name
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)" # absolute path to project root
+PROJECT_DIR="$PWD"                                               # absolute path to project root (resolved after cd)
 SERVICE_USER="${SUDO_USER:-opc}"                                  # user that will run gunicorn
 
 # ─── Output colors ───────────────────────────────────────────────────────────
@@ -82,12 +82,9 @@ else
     info ".env found."
 fi
 
-# ─── Create and register systemd service (if not already present) ─────────────
-if [ -f "$SERVICE_FILE" ]; then
-    info "systemd service '$SERVICE_NAME' already registered. Skipping creation."
-else
-    info "Creating systemd service '$SERVICE_NAME' at $SERVICE_FILE ..."
-    sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+# ─── Create / overwrite systemd service (always regenerated to keep paths correct) ───
+info "Writing systemd service '$SERVICE_NAME' at $SERVICE_FILE ..."
+sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=${SERVICE_NAME}
 After=network.target
@@ -106,10 +103,9 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable "$SERVICE_NAME"
-    info "Service '$SERVICE_NAME' registered and enabled."
-fi
+sudo systemctl daemon-reload
+sudo systemctl enable "$SERVICE_NAME"
+info "Service '$SERVICE_NAME' registered and enabled."
 
 # ─── Start the service ────────────────────────────────────────────────────────
 if systemctl is-active --quiet "$SERVICE_NAME"; then
