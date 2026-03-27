@@ -6,9 +6,23 @@
 
 ---
 
+- [Español](#español)
+- [English](#english)
+
+---
+
 ## Español
 
-Plantilla base de OptimusApi con soporte para versionado de endpoints y configuración lista para producción en Oracle Linux (ARM / Ampere A1) detrás de Cloudflare.
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Respuesta de la ruta raíz](#respuesta-de-la-ruta-raíz)
+- [Scripts](#scripts)
+- [Setup local (Windows)](#setup-local-windows)
+- [Deploy local (Windows)](#deploy-local-windows)
+- [Deploy en VPS](#deploy-en-vps)
+- [Agregar una nueva versión de la API](#agregar-una-nueva-versión-de-la-api)
+- [Variables de entorno](#variables-de-entorno)
+
+Plantilla base de OptimusApi con soporte para versionado de endpoints y configuración lista para producción en Linux.
 
 ### Estructura del proyecto
 
@@ -44,10 +58,10 @@ GET /
 
 | Script | Plataforma | Propósito |
 |---|---|---|
-| `scripts/linux/setup.sh` | VPS (Oracle Linux) | Crea `.venv`, instala dependencias, copia `.env` |
-| `scripts/linux/deploy.sh` | VPS (Oracle Linux) | `git pull` → verifica paquetes → reinicia el servicio |
-| `scripts/linux/start.sh` | VPS (Oracle Linux) | Inicia el servicio systemd |
-| `scripts/linux/stop.sh` | VPS (Oracle Linux) | Detiene el servicio systemd |
+| `scripts/linux/setup.sh` | VPS (Linux) | Crea `.venv`, instala dependencias, copia `.env` |
+| `scripts/linux/deploy.sh` | VPS (Linux) | `git pull` → verifica paquetes → reinicia el servicio |
+| `scripts/linux/start.sh` | VPS (Linux) | Inicia el servicio systemd |
+| `scripts/linux/stop.sh` | VPS (Linux) | Detiene el servicio systemd |
 | `scripts/windows/setup.ps1` | Windows (local) | Crea `.venv`, instala dependencias, copia `.env` |
 | `scripts/windows/deploy.ps1` | Windows (local) | `git pull` → verifica paquetes → reinicia uvicorn |
 | `scripts/windows/start.ps1` | Windows (local) | Inicia uvicorn en primer plano con auto-reload (Ctrl+C para detener) |
@@ -72,7 +86,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 .\scripts\windows\deploy.ps1
 ```
 
-### Deploy en VPS — Oracle Linux (ARM / Ampere A1)
+### Deploy en VPS
 
 #### 1. Instalar Python 3.9
 
@@ -113,7 +127,7 @@ Description=OptimusApi
 After=network.target
 
 [Service]
-User=opc
+User=<your-user>
 WorkingDirectory=/srv/optimusapi
 EnvironmentFile=-/srv/optimusapi/.env
 ExecStart=/srv/optimusapi/.venv/bin/gunicorn app.main:app \
@@ -132,10 +146,10 @@ sudo systemctl enable --now optimusapi
 sudo systemctl status optimusapi
 ```
 
-> 2 workers es razonable para el Ampere A1 (1 OCPU / 6 GB RAM).
+> 2 workers es un buen punto de partida para la mayoría de entornos.
 > El `-` en `EnvironmentFile` hace que systemd ignore el archivo si no existe.
 
-#### 6. Nginx como proxy reverso (Cloudflare → Nginx → Gunicorn)
+#### 6. Nginx como proxy reverso
 
 ```bash
 sudo dnf install nginx -y
@@ -184,13 +198,22 @@ app.include_router(v2_router, prefix="/api/v2")
 | `API_VERSION` | `1.0.0` | Versión reportada en `/` |
 | `DEBUG` | `false` | Activa `/docs`, `/redoc`, `/openapi.json` |
 
-> `DEBUG=false` en producción desactiva la documentación automática — no expone la estructura de la API detrás de Cloudflare.
+> `DEBUG=false` en producción desactiva la documentación automática — no expone la estructura interna de la API.
 
 ---
 
 ## English
 
-FastAPI base template with versioned endpoint support, ready for production on Oracle Linux (ARM / Ampere A1) behind Cloudflare.
+- [Project structure](#project-structure)
+- [Root route response](#root-route-response)
+- [Scripts](#scripts-1)
+- [Local setup (Windows)](#local-setup-windows)
+- [Local deploy (Windows)](#local-deploy-windows)
+- [VPS deploy](#vps-deploy)
+- [Adding a new API version](#adding-a-new-api-version)
+- [Environment variables](#environment-variables)
+
+FastAPI base template with versioned endpoint support, ready for production on Linux.
 
 ### Project structure
 
@@ -226,10 +249,10 @@ GET /
 
 | Script | Platform | Purpose |
 |---|---|---|
-| `scripts/linux/setup.sh` | VPS (Oracle Linux) | Creates `.venv`, installs deps, copies `.env` |
-| `scripts/linux/deploy.sh` | VPS (Oracle Linux) | `git pull` → checks packages → restarts the service |
-| `scripts/linux/start.sh` | VPS (Oracle Linux) | Starts the systemd service |
-| `scripts/linux/stop.sh` | VPS (Oracle Linux) | Stops the systemd service |
+| `scripts/linux/setup.sh` | VPS (Linux) | Creates `.venv`, installs deps, copies `.env` |
+| `scripts/linux/deploy.sh` | VPS (Linux) | `git pull` → checks packages → restarts the service |
+| `scripts/linux/start.sh` | VPS (Linux) | Starts the systemd service |
+| `scripts/linux/stop.sh` | VPS (Linux) | Stops the systemd service |
 | `scripts/windows/setup.ps1` | Windows (local) | Creates `.venv`, installs deps, copies `.env` |
 | `scripts/windows/deploy.ps1` | Windows (local) | `git pull` → checks packages → restarts uvicorn |
 | `scripts/windows/start.ps1` | Windows (local) | Starts uvicorn in foreground with auto-reload (Ctrl+C to stop) |
@@ -254,7 +277,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 .\scripts\windows\deploy.ps1
 ```
 
-### VPS deploy — Oracle Linux (ARM / Ampere A1)
+### VPS deploy
 
 #### 1. Install Python 3.9
 
@@ -295,7 +318,7 @@ Description=OptimusApi
 After=network.target
 
 [Service]
-User=opc
+User=<your-user>
 WorkingDirectory=/srv/optimusapi
 EnvironmentFile=-/srv/optimusapi/.env
 ExecStart=/srv/optimusapi/.venv/bin/gunicorn app.main:app \
@@ -314,10 +337,10 @@ sudo systemctl enable --now optimusapi
 sudo systemctl status optimusapi
 ```
 
-> 2 workers is appropriate for Ampere A1 (1 OCPU / 6 GB RAM).
+> 2 workers is a good starting point for most environments.
 > The `-` in `EnvironmentFile` makes systemd ignore the file if it does not exist.
 
-#### 6. Nginx reverse proxy (Cloudflare → Nginx → Gunicorn)
+#### 6. Nginx reverse proxy
 
 ```bash
 sudo dnf install nginx -y
@@ -366,4 +389,4 @@ app.include_router(v2_router, prefix="/api/v2")
 | `API_VERSION` | `1.0.0` | Version reported at `/` |
 | `DEBUG` | `false` | Enables `/docs`, `/redoc`, `/openapi.json` |
 
-> `DEBUG=false` in production disables auto-generated docs — keeps the API structure hidden behind Cloudflare.
+> `DEBUG=false` in production disables auto-generated docs — keeps the API structure hidden.
