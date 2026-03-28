@@ -23,7 +23,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 SERVICE_NAME="optimus-api"   # ← change to your actual .service name
-GIT_BRANCH="main"            # ← change if your default branch is "master"
+GIT_BRANCH="master"            # ← change if your default branch is "master"
 VENV_DIR=".venv"
 REQUIREMENTS="requirements.txt"
 HASH_FILE=".requirements.hash"

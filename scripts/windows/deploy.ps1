@@ -26,7 +26,7 @@ Set-Location $ProjectRoot
 $VenvDir      = ".venv"
 $Requirements = "requirements.txt"
 $HashFile     = ".requirements.hash"
-$GitBranch    = "main"   # ← change if your default branch is "master"
+$GitBranch    = "master"   # ← change if your default branch is "master"
 
 function Write-Info  { param($msg) Write-Host "[optimus:deploy]" -ForegroundColor Green -NoNewline; Write-Host " $msg" -ForegroundColor White }
 function Write-Warn  { param($msg) Write-Host "[optimus:deploy]" -ForegroundColor Yellow -NoNewline; Write-Host " $msg" -ForegroundColor White }
