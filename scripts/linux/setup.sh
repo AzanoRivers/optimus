@@ -74,6 +74,12 @@ pip install -r "$REQUIREMENTS"
 sha256sum "$REQUIREMENTS" > "$HASH_FILE"
 info "Requirements hash saved to $HASH_FILE"
 
+# ─── Fix SELinux context (Oracle Linux / enforcing mode) ─────────────────────
+if command -v sestatus &>/dev/null && sestatus 2>/dev/null | grep -q "enforcing"; then
+    info "SELinux enforcing detected. Fixing context on .venv/bin/ ..."
+    chcon -R -t bin_t "${VENV_DIR}/bin/" 2>/dev/null || warn "chcon failed — you may need to run it manually."
+fi
+
 # ─── Check .env ────────────────────────────────────────────────────────────
 if [ ! -f "$ENV_FILE" ]; then
     warn ".env not found. The service will start without environment variables."
