@@ -16,7 +16,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
     a { color: #58a6ff; text-decoration: none; }
     a:hover { text-decoration: underline; }
 
-    .header {
+    .header { 
       background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
       border-bottom: 1px solid #30363d;
       padding: 2.5rem 2rem 2rem;
@@ -24,6 +24,16 @@ _GUIDE_HTML = """<!DOCTYPE html>
     }
     .header h1 { font-size: 2rem; color: #f0f6fc; letter-spacing: -0.5px; }
     .header p  { margin-top: 0.4rem; color: #8b949e; font-size: 0.95rem; }
+    .header-links {
+      margin-top: 1rem;
+      display: flex; gap: 1.2rem; justify-content: center; flex-wrap: wrap;
+    }
+    .header-links a {
+      color: #8b949e; font-size: 0.8rem; text-decoration: none;
+      display: flex; align-items: center; gap: 0.3rem;
+      transition: color 0.15s;
+    }
+    .header-links a:hover { color: #58a6ff; }
     .badge {
       display: inline-block; margin-top: 0.8rem;
       background: #238636; color: #fff; font-size: 0.75rem;
@@ -148,6 +158,11 @@ _GUIDE_HTML = """<!DOCTYPE html>
   <h1>&#x26A1; Optimus API</h1>
   <p>Media compression service &middot; REST API reference</p>
   <span class="badge">v1</span>
+  <div class="header-links">
+    <a href="https://www.azanorivers.com/" target="_blank" rel="noopener">&#x1F464; AzanoRivers</a>
+    <a href="https://github.com/azanoRivers" target="_blank" rel="noopener">&#x1F4BB; GitHub</a>
+    <a href="https://www.azanolabs.com/" target="_blank" rel="noopener">&#x1F9EA; Experiments &mdash; AzanoLabs</a>
+  </div>
 </div>
 
 <div class="container">

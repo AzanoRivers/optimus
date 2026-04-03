@@ -2,6 +2,7 @@
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?style=flat-square&logo=fastapi&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.9-3776AB?style=flat-square&logo=python&logoColor=white)
+![Nginx](https://img.shields.io/badge/nginx-1.x-009639?style=flat-square&logo=nginx&logoColor=white)
 ![Linux](https://img.shields.io/badge/Oracle_Linux-ARM_A1-FCC624?style=flat-square&logo=linux&logoColor=black)
 
 ---
