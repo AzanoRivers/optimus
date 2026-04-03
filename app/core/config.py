@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "OptimusApi"
     API_VERSION: str = "1.0.0"
     DEBUG: bool = False
+    API_KEY: str = ""
 
 
 settings = Settings()

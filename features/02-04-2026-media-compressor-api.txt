@@ -1,0 +1,203 @@
+FEATURE PLAN: Media Compressor API
+===================================
+Date    : 02-04-2026
+Feature : Migrate image compression from local CLI tool to REST API
+Source  : CompresorImagesVideos/ (do NOT modify)
+Target  : vps_optimus_api/
+
+
+CONTEXT
+-------
+The local CLI tool (CompresorImagesVideos/) compresses images using Pillow.
+It accepts: output format (jpg, webp, png) and max pixel dimension (resize).
+The logic is already clean and decoupled — compress_single_image() works on
+individual files and is perfectly reusable in an API context.
+
+VPS hardware: 1 OCPU / 6GB RAM (Ampere A1, ARM). CPU is the bottleneck.
+Images are processed in-memory (no disk I/O needed for API use).
+
+
+DECISION: HOW TO RECEIVE IMAGES
+---------------------------------
+multipart/form-data with UploadFile (FastAPI native)
+  - Browser native, widely supported, works with FormData in JS
+  - FastAPI handles it natively with UploadFile
+  - No base64 overhead (+33% size with base64)
+  - Can stream directly to Pillow via BytesIO — no temp files needed
+  - Best fit for limited server
+
+
+ENDPOINTS TO CREATE
+--------------------
+All endpoints under: /api/v1/media/
+
+All media endpoints require header: X-API-Key: <key>
+
+GET /guide
+  - Auth     : NOT required (public)
+  - Returns  : text/html — bilingual API usage guide (EN first, ES second)
+  - Content  : auth instructions, endpoints, params, limits, response headers,
+               curl examples, status codes
+
+POST /api/v1/media/images/compress
+  - Auth     : X-API-Key header required
+  - Receives : one or more image files (multipart)
+  - Params   : out (optional: jpg | webp | png, default: keep original)
+               size (optional: int, max pixel dimension, default: no resize)
+  - Returns  : single file → direct file response (StreamingResponse)
+               multiple files → zip archive (StreamingResponse)
+  - Limits   : max 10 images per request, max 50MB per image, max 200MB per batch
+
+POST /api/v1/media/videos/compress
+  - Auth     : X-API-Key header required
+  - Status   : 501 Not Implemented
+  - Returns  : {"detail": "Video compression is not available yet. Coming soon."}
+
+
+FOLDER STRUCTURE (what to create)
+-----------------------------------
+vps_optimus_api/
+├── app/
+│   ├── api/
+│   │   └── v1/
+│   │       ├── router.py          (update: include media router)
+│   │       └── media/
+│   │           ├── __init__.py
+│   │           └── router.py      (new: image + video stub endpoints)
+│   ├── core/
+│   │   ├── config.py          (update: add API_KEY field)
+│   │   └── security.py        (new: verify_api_key dependency)
+│   ├── services/
+│   │   ├── __init__.py
+│   │   └── image_compressor.py   (new: adapted from CompresorImagesVideos)
+│   └── guide.py               (new: GET /guide HTML response)
+
+
+SERVICE: image_compressor.py
+------------------------------
+Adapts compress_single_image() from the original tool.
+Key changes:
+  - Input : PIL.Image opened from BytesIO (UploadFile bytes) — no file paths
+  - Output: BytesIO buffer returned to caller — no disk writes
+  - Keeps : all format logic, alpha handling, resize logic (thumbnail)
+  - API-specific validations added at endpoint level (size, format, extension)
+
+
+PARAMETERS (POST body — multipart/form-data)
+---------------------------------------------
+Field    | Type        | Required | Default       | Notes
+---------|-------------|----------|---------------|---------------------------
+files    | UploadFile+ | yes      | -             | 1-10 images, max 50MB each, 200MB batch total
+out      | str         | no       | keep original | jpg, webp, png
+size     | int         | no       | no resize     | max pixel on longest side
+
+
+RESPONSE BEHAVIOR
+------------------
+1 image completed  → StreamingResponse with correct Content-Type and filename header
+N images completed → StreamingResponse with Content-Type: application/zip
+                     filename: compressed_images.zip
+                     Each file inside zip uses original name + new extension if converted
+
+All responses include the following headers:
+  X-Optimus-Status    : "complete" | "partial" | "timeout"
+  X-Optimus-Processed : number of images successfully compressed
+  X-Optimus-Total     : total images received in the request
+
+Partial result (timeout hit after ≥1 image):
+  → Returns ZIP with processed images only
+  → X-Optimus-Status: partial
+  → HTTP 206 Partial Content
+
+Timeout with 0 images processed:
+  → HTTP 408 Request Timeout
+  → JSON: {"detail": "Processing timed out before any image could be completed."}
+
+
+API KEY AUTHENTICATION
+-----------------------
+Header : X-API-Key
+Storage: .env variable API_KEY
+Format : 64-char hex string
+Check  : FastAPI dependency (app/core/security.py) — no extra packages needed
+Scope  : all /api/v1/ endpoints (guide is public)
+
+Generate key (one-time terminal command, NOT a project dependency):
+  Option A: openssl rand -hex 32
+  Option B: python -c "import secrets; print(secrets.token_hex(32))"
+Add to .env : API_KEY=<your-key>
+Use in requests: X-API-Key: <your-key>
+
+Error response if missing or invalid:
+  HTTP 401 — {"detail": "Invalid or missing API key"}
+
+
+RESPONSE HEADERS (CORS expose)
+--------------------------------
+All StreamingResponse zip/file responses include:
+  Access-Control-Expose-Headers: X-Optimus-Status, X-Optimus-Processed, X-Optimus-Total
+
+This allows browser fetch() clients to read these headers cross-origin.
+
+
+VALIDATIONS AT ENDPOINT LEVEL
+-------------------------------
+- File extension must be in: .jpg .jpeg .png .webp
+- File size: reject if > 50MB per file
+- Total batch size: reject if combined size > 200MB
+- out param: must be jpg, webp or png if provided
+- size param: must be int > 0 and <= 8000 if provided
+- files count: 1 to 10
+
+
+TIMEOUT STRATEGY
+-----------------
+Cloudflare free tier cuts origin connections at 100 seconds.
+Internal timeout: 85 seconds (15s buffer for network + response building).
+
+Implementation:
+  - Record start time at beginning of endpoint
+  - Process images sequentially (one by one)
+  - After each image, check: if elapsed >= 85s → stop loop
+  - Build response from whatever was processed
+
+Behavior:
+  0 processed → HTTP 408 + JSON error message
+  ≥1 processed → HTTP 206 + ZIP/file + X-Optimus-Status: partial header
+  All processed → HTTP 200 + ZIP/file + X-Optimus-Status: complete header
+
+
+DEPENDENCIES TO ADD (requirements.txt)
+----------------------------------------
+pillow>=10.0.0           (image processing — already in original tool)
+python-multipart>=0.0.9  (required by FastAPI for UploadFile / form-data)
+
+No extra packages for API key auth — uses FastAPI Header() dependency only.
+
+
+IMPLEMENTATION ORDER
+---------------------
+1.  Add pillow and python-multipart to requirements.txt
+2.  Update app/core/config.py — add API_KEY field
+3.  Create app/core/security.py — verify_api_key dependency
+4.  Create app/services/__init__.py
+5.  Create app/services/image_compressor.py  (in-memory compress logic)
+6.  Create app/api/v1/media/__init__.py
+7.  Create app/api/v1/media/router.py  (endpoints + video stub)
+8.  Update app/api/v1/router.py to include media router
+9.  Create app/guide.py  (GET /guide HTML)
+10. Update app/main.py to register /guide route
+11. Add API_KEY to .env (generate once with openssl or python — see API KEY AUTHENTICATION section)
+12. Test locally with curl or Postman
+13. git push + deploy to VPS
+
+
+NOTES
+------
+- tqdm is NOT needed (no CLI progress bar in API context)
+- imageio-ffmpeg is NOT needed yet (video is a stub)
+- compress_images() batch function is NOT reused — only compress_single_image() logic
+- No temp files on disk at any point — all in-memory via BytesIO
+- ZIP is built in-memory with zipfile.ZipFile(BytesIO(), "w")
+- ARM VPS: Pillow wheels for aarch64 are available on PyPI — no compilation needed
+- python-multipart is pure Python — no architecture dependency

@@ -1,10 +1,8 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.core.config import settings
-
-# ─── Future versioned routers go here ───────────────────────────────────────
-# from app.api.v1.router import router as v1_router
-# from app.api.v2.router import router as v2_router
+from app.api.v1.router import router as v1_router
+from app.guide import get_guide
 
 
 @asynccontextmanager
@@ -23,9 +21,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ─── Future versioned routers registration ───────────────────────────────────
-# app.include_router(v1_router, prefix="/api/v1")
-# app.include_router(v2_router, prefix="/api/v2")
+app.include_router(v1_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["status"])
@@ -35,3 +31,8 @@ async def root() -> dict:
         "version": settings.API_VERSION,
         "status": "ok",
     }
+
+
+@app.get("/guide", tags=["guide"], include_in_schema=False)
+def guide():
+    return get_guide()

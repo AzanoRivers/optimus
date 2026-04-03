@@ -2,5 +2,9 @@
 fastapi[standard]>=0.115.0
 pydantic-settings>=2.7.0
 
+# ─── Media processing ────────────────────────────────────────────────────────
+pillow>=10.0.0
+python-multipart>=0.0.9
+
 # ─── Production server ───────────────────────────────────────────────────────
 gunicorn>=23.0.0

@@ -19,6 +19,8 @@
 - [Setup local (Windows)](#setup-local-windows)
 - [Deploy local (Windows)](#deploy-local-windows)
 - [Deploy en VPS](#deploy-en-vps)
+- [Configuración de Nginx](#6-nginx-como-proxy-reverso)
+- [HTTPS con Cloudflare (subdominio)](#7-https-con-cloudflare-origin-certificate)
 - [Agregar una nueva versión de la API](#agregar-una-nueva-versión-de-la-api)
 - [Variables de entorno](#variables-de-entorno)
 
@@ -151,10 +153,20 @@ sudo systemctl status optimusapi
 
 #### 6. Nginx como proxy reverso
 
+Instalar y habilitar:
+
 ```bash
 sudo dnf install nginx -y
 sudo systemctl enable --now nginx
 ```
+
+Crear el archivo de configuración del sitio:
+
+```bash
+sudo nano /etc/nginx/conf.d/optimus.conf
+```
+
+Contenido del archivo:
 
 ```nginx
 server {
@@ -171,7 +183,111 @@ server {
 }
 ```
 
-#### 7. Futuros deploys
+Validar y recargar:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Abrir puertos en el firewall:
+
+```bash
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --reload
+```
+
+Verificar que todo responde:
+
+```bash
+curl http://127.0.0.1:8000      # directo a gunicorn
+curl http://api.tudominio.com   # a través de nginx
+```
+
+#### 7. HTTPS con Cloudflare Origin Certificate
+
+> **Aplica cuando:** el VPS sirve desde un subdominio (ej. `api.tudominio.com`) y el dominio raíz (`tudominio.com`) ya tiene otra app (Vercel, Netlify, etc.) con el proxy de Cloudflare activo. Cambiar el modo SSL de la zona afectaría el dominio principal; esta solución habilita HTTPS solo en el subdominio del VPS.
+
+**Por qué el modo Flexible no es suficiente**
+
+Con Cloudflare en modo **Full (Strict)** (recomendado), el edge de Cloudflare exige que el servidor de origen también hable HTTPS. Si el dominio raíz tiene otra app, cambiar el modo global a Flexible la rompería. La solución es instalar un **Cloudflare Origin Certificate** en nginx — es gratuito, válido 15 años y solo funciona entre Cloudflare y el servidor.
+
+**Paso 1 — Generar el certificado en Cloudflare**
+
+1. Cloudflare → tu zona → **SSL/TLS** → **Origin Server**
+2. Clic en **Create Certificate**
+3. Deja los hostnames por defecto (`*.tudominio.com` y `tudominio.com`)
+4. Validity: **15 years**
+5. Clic **Create**
+6. Copia el **Certificate** y la **Private Key** — solo se muestran una vez
+
+**Paso 2 — Guardar el cert en el VPS**
+
+```bash
+sudo mkdir -p /etc/nginx/ssl
+sudo nano /etc/nginx/ssl/origin.crt   # pega el Certificate
+sudo nano /etc/nginx/ssl/origin.key   # pega la Private Key
+sudo chmod 600 /etc/nginx/ssl/origin.key
+```
+
+**Paso 3 — Actualizar la configuración de nginx**
+
+```bash
+sudo nano /etc/nginx/conf.d/optimus.conf
+```
+
+Reemplaza el contenido con:
+
+```nginx
+server {
+    listen 80;
+    server_name api.tudominio.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name api.tudominio.com;
+
+    ssl_certificate     /etc/nginx/ssl/origin.crt;
+    ssl_certificate_key /etc/nginx/ssl/origin.key;
+
+    location / {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**Paso 4 — Habilitar conexiones de red en nginx (SELinux)**
+
+En Oracle Linux con SELinux en modo `enforcing`, nginx necesita permiso explícito para conectarse a procesos locales:
+
+```bash
+sudo setsebool -P httpd_can_network_connect 1
+```
+
+**Paso 5 — Configurar el modo SSL en Cloudflare**
+
+Cloudflare → SSL/TLS → Overview → cambiar a **Full (Strict)**
+
+> Esto no afecta otras apps en el dominio raíz siempre que también tengan certificados válidos (Vercel y Netlify los incluyen por defecto).
+
+**Verificar:**
+
+```bash
+curl https://api.tudominio.com
+# → {"name":"OptimusApi","version":"1.0.0","status":"ok"}
+```
+
+#### 8. Futuros deploys
 
 ```bash
 ./scripts/linux/deploy.sh
@@ -210,6 +326,8 @@ app.include_router(v2_router, prefix="/api/v2")
 - [Local setup (Windows)](#local-setup-windows)
 - [Local deploy (Windows)](#local-deploy-windows)
 - [VPS deploy](#vps-deploy)
+- [Nginx configuration](#6-nginx-reverse-proxy)
+- [HTTPS with Cloudflare (subdomain)](#7-https-with-cloudflare-origin-certificate)
 - [Adding a new API version](#adding-a-new-api-version)
 - [Environment variables](#environment-variables)
 
@@ -342,10 +460,20 @@ sudo systemctl status optimusapi
 
 #### 6. Nginx reverse proxy
 
+Install and enable:
+
 ```bash
 sudo dnf install nginx -y
 sudo systemctl enable --now nginx
 ```
+
+Create the site configuration file:
+
+```bash
+sudo nano /etc/nginx/conf.d/optimus.conf
+```
+
+File contents:
 
 ```nginx
 server {
@@ -362,7 +490,111 @@ server {
 }
 ```
 
-#### 7. Future deploys
+Validate and reload:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Open firewall ports:
+
+```bash
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --reload
+```
+
+Verify everything responds:
+
+```bash
+curl http://127.0.0.1:8000     # direct to gunicorn
+curl http://api.yourdomain.com # through nginx
+```
+
+#### 7. HTTPS with Cloudflare Origin Certificate
+
+> **Applies when:** the VPS is served from a subdomain (e.g. `api.yourdomain.com`) and the root domain (`yourdomain.com`) already has another app (Vercel, Netlify, etc.) behind Cloudflare's proxy. Changing the zone-wide SSL mode would affect the main domain; this approach enables HTTPS only for the VPS subdomain.
+
+**Why Flexible mode is not enough**
+
+With Cloudflare in **Full (Strict)** mode (recommended), the Cloudflare edge requires the origin server to also speak HTTPS. If the root domain hosts another app, switching the global mode to Flexible would break it. The solution is to install a **Cloudflare Origin Certificate** in nginx — it's free, valid for 15 years, and only works between Cloudflare and your server.
+
+**Step 1 — Generate the certificate in Cloudflare**
+
+1. Cloudflare → your zone → **SSL/TLS** → **Origin Server**
+2. Click **Create Certificate**
+3. Leave default hostnames (`*.yourdomain.com` and `yourdomain.com`)
+4. Validity: **15 years**
+5. Click **Create**
+6. Copy the **Certificate** and the **Private Key** — they are only shown once
+
+**Step 2 — Save the cert on the VPS**
+
+```bash
+sudo mkdir -p /etc/nginx/ssl
+sudo nano /etc/nginx/ssl/origin.crt   # paste the Certificate
+sudo nano /etc/nginx/ssl/origin.key   # paste the Private Key
+sudo chmod 600 /etc/nginx/ssl/origin.key
+```
+
+**Step 3 — Update the nginx configuration**
+
+```bash
+sudo nano /etc/nginx/conf.d/optimus.conf
+```
+
+Replace the contents with:
+
+```nginx
+server {
+    listen 80;
+    server_name api.yourdomain.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name api.yourdomain.com;
+
+    ssl_certificate     /etc/nginx/ssl/origin.crt;
+    ssl_certificate_key /etc/nginx/ssl/origin.key;
+
+    location / {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**Step 4 — Allow nginx network connections in SELinux**
+
+On Oracle Linux with SELinux in `enforcing` mode, nginx needs explicit permission to connect to local processes:
+
+```bash
+sudo setsebool -P httpd_can_network_connect 1
+```
+
+**Step 5 — Set the SSL mode in Cloudflare**
+
+Cloudflare → SSL/TLS → Overview → switch to **Full (Strict)**
+
+> This does not affect other apps on the root domain as long as they also have valid certificates (Vercel and Netlify include them by default).
+
+**Verify:**
+
+```bash
+curl https://api.yourdomain.com
+# → {"name":"OptimusApi","version":"1.0.0","status":"ok"}
+```
+
+#### 8. Future deploys
 
 ```bash
 ./scripts/linux/deploy.sh
