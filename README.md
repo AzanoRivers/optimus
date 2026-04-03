@@ -14,29 +14,36 @@
 ## Español
 
 - [Estructura del proyecto](#estructura-del-proyecto)
-- [Respuesta de la ruta raíz](#respuesta-de-la-ruta-raíz)
+- [Endpoints](#endpoints)
+- [Autenticación](#autenticación)
 - [Scripts](#scripts)
 - [Setup local (Windows)](#setup-local-windows)
 - [Deploy local (Windows)](#deploy-local-windows)
 - [Deploy en VPS](#deploy-en-vps)
 - [Configuración de Nginx](#6-nginx-como-proxy-reverso)
 - [HTTPS con Cloudflare (subdominio)](#7-https-con-cloudflare-origin-certificate)
-- [Agregar una nueva versión de la API](#agregar-una-nueva-versión-de-la-api)
+- [Seguridad y rate limiting](#9-seguridad-y-rate-limiting)
 - [Variables de entorno](#variables-de-entorno)
 
-Plantilla base de OptimusApi con soporte para versionado de endpoints y configuración lista para producción en Linux.
+API de compresión de imágenes desplegada en Oracle Linux ARM (Ampere A1). Procesa imágenes en memoria sin escribir archivos temporales en disco, soporta lotes de hasta 10 archivos y devuelve el resultado como archivo directo o ZIP.
 
 ### Estructura del proyecto
 
 ```
 vps_optimus_api/
 ├── app/
-│   ├── main.py              # Entry point: app FastAPI + ruta raíz
+│   ├── main.py              # Entry point: app FastAPI + rutas raíz y guide
+│   ├── guide.py             # HTML guide bilingüe servida en GET /guide
 │   ├── core/
-│   │   └── config.py        # Settings via pydantic-settings (.env)
-│   └── api/
-│       └── v1/
-│           └── router.py    # Router v1 — agrega endpoints aquí
+│   │   ├── config.py        # Settings via pydantic-settings (.env)
+│   │   └── security.py      # Dependencia verify_api_key (X-API-Key header)
+│   ├── api/
+│   │   └── v1/
+│   │       ├── router.py    # Router v1
+│   │       └── media/
+│   │           └── router.py  # Endpoints de compresión de imágenes y videos
+│   └── services/
+│       └── image_compressor.py  # Lógica de compresión en memoria (Pillow)
 ├── scripts/
 │   ├── linux/
 │   │   ├── setup.sh         # Inicialización única en el VPS
@@ -45,16 +52,45 @@ vps_optimus_api/
 │       ├── setup.ps1        # Inicialización única en Windows (local)
 │       └── deploy.ps1       # Pull + actualización de paquetes + restart local
 ├── requirements.txt
-├── .env.example
+├── optimus-api.service      # Archivo de referencia del servicio systemd
 └── README.md
 ```
 
-### Respuesta de la ruta raíz
+### Endpoints
+
+| Método | Ruta | Auth | Descripción |
+|---|---|---|---|
+| `GET` | `/` | No | Estado de la API |
+| `GET` | `/guide` | No | Guía interactiva bilingüe (HTML) |
+| `POST` | `/api/v1/media/images/compress` | Sí | Compresión de imágenes |
+| `POST` | `/api/v1/media/videos/compress` | Sí | Compresión de videos (stub 501) |
+
+**POST `/api/v1/media/images/compress`** — multipart/form-data
+
+| Campo | Tipo | Requerido | Descripción |
+|---|---|---|---|
+| `files` | `File[]` | Sí | Hasta 10 imágenes (jpg, png, webp). Máx 50 MB/archivo, 200 MB total |
+| `out` | `string` | No | Formato de salida: `jpg`, `webp`, `png` |
+| `size` | `int` | No | Dimensión máxima en píxeles del lado más largo (1–8000) |
+
+Respuesta: archivo único → `StreamingResponse` directo · múltiples → ZIP.
+
+Headers de respuesta:
+```
+X-Optimus-Status: complete | partial | timeout
+X-Optimus-Processed: <int>
+X-Optimus-Total: <int>
+```
+
+### Autenticación
+
+Todos los endpoints bajo `/api/v1/` requieren el header `X-API-Key`:
 
 ```
-GET /
-→ {"name": "OptimusApi", "version": "1.0.0", "status": "ok"}
+X-API-Key: tu_api_key
 ```
+
+El valor se configura en `.env` como `API_KEY`. Si falta o es incorrecto, se devuelve 401.
 
 ### Scripts
 
@@ -252,6 +288,8 @@ server {
     ssl_certificate     /etc/nginx/ssl/origin.crt;
     ssl_certificate_key /etc/nginx/ssl/origin.key;
 
+    client_max_body_size 200m;
+
     location / {
         proxy_pass         http://127.0.0.1:8000;
         proxy_set_header   Host $host;
@@ -294,17 +332,66 @@ curl https://api.tudominio.com
 # → git pull → verifica paquetes → reinicia el servicio
 ```
 
-### Agregar una nueva versión de la API
+#### 9. Seguridad y rate limiting
 
-1. Crear `app/api/v2/` con `__init__.py` y `router.py`
-2. Registrar en `app/main.py`:
+**Límite de tamaño de request**
 
-```python
-from app.api.v2.router import router as v2_router
-app.include_router(v2_router, prefix="/api/v2")
+Ya incluido en el bloque `listen 443 ssl` del paso 7 como `client_max_body_size 200m;`. nginx devuelve 413 antes de que el request llegue a la app.
+
+**Rate limiting con nginx**
+
+Crea el archivo de zona (los archivos en `conf.d/` se incluyen dentro del bloque `http {}` de nginx.conf):
+
+```bash
+sudo tee /etc/nginx/conf.d/rate-limit.conf <<'EOF'
+limit_req_zone $http_cf_connecting_ip zone=api:10m rate=5r/s;
+EOF
 ```
 
-> Un solo `.venv` para todas las versiones. Los paquetes se instalan **una sola vez**.
+Agrega `limit_req` dentro del bloque `location /` en `optimus.conf`:
+
+```nginx
+location / {
+    limit_req zone=api burst=20 nodelay;
+
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+> Se usa `$http_cf_connecting_ip` en lugar de `$binary_remote_addr` porque nginx está detrás de Cloudflare — ese header contiene la IP real del usuario. `5r/s` con `burst=20 nodelay` permite picos cortos sin demora extra, luego rechaza con 429.
+
+**fail2ban — protección SSH contra fuerza bruta**
+
+Requiere habilitar el repo EPEL primero (Oracle Linux 9):
+
+```bash
+sudo dnf config-manager --set-enabled ol9_developer_EPEL
+sudo dnf install -y fail2ban
+sudo systemctl enable --now fail2ban
+```
+
+Habilitar la jail de SSH:
+
+```bash
+sudo tee /etc/fail2ban/jail.local <<'EOF'
+[sshd]
+enabled = true
+EOF
+
+sudo systemctl restart fail2ban
+sudo fail2ban-client status sshd
+```
+
+> Configuración por defecto: 5 intentos fallidos → ban de 10 minutos.
+> Oracle Cloud ya deshabilita la autenticación por contraseña vía `50-cloud-init.conf` — solo funciona la clave privada.
 
 ### Variables de entorno
 
@@ -313,37 +400,46 @@ app.include_router(v2_router, prefix="/api/v2")
 | `PROJECT_NAME` | `OptimusApi` | Nombre de la API |
 | `API_VERSION` | `1.0.0` | Versión reportada en `/` |
 | `DEBUG` | `false` | Activa `/docs`, `/redoc`, `/openapi.json` |
+| `API_KEY` | `` | Clave de autenticación para los endpoints protegidos |
 
 > `DEBUG=false` en producción desactiva la documentación automática — no expone la estructura interna de la API.
+> `API_KEY` debe ser un string aleatorio y suficientemente largo (recomendado: 32+ caracteres hex).
 
 ---
 
 ## English
 
 - [Project structure](#project-structure)
-- [Root route response](#root-route-response)
+- [Endpoints](#endpoints-1)
+- [Authentication](#authentication)
 - [Scripts](#scripts-1)
 - [Local setup (Windows)](#local-setup-windows)
 - [Local deploy (Windows)](#local-deploy-windows)
 - [VPS deploy](#vps-deploy)
 - [Nginx configuration](#6-nginx-reverse-proxy)
 - [HTTPS with Cloudflare (subdomain)](#7-https-with-cloudflare-origin-certificate)
-- [Adding a new API version](#adding-a-new-api-version)
+- [Security & rate limiting](#9-security--rate-limiting)
 - [Environment variables](#environment-variables)
 
-FastAPI base template with versioned endpoint support, ready for production on Linux.
+Image compression API deployed on Oracle Linux ARM (Ampere A1). Processes images in-memory without writing temporary files to disk, supports batches of up to 10 files, and returns the result as a direct file or ZIP.
 
 ### Project structure
 
 ```
 vps_optimus_api/
 ├── app/
-│   ├── main.py              # Entry point: FastAPI app + root route
+│   ├── main.py              # Entry point: FastAPI app + root and guide routes
+│   ├── guide.py             # Bilingual HTML guide served at GET /guide
 │   ├── core/
-│   │   └── config.py        # Settings via pydantic-settings (.env)
-│   └── api/
-│       └── v1/
-│           └── router.py    # v1 router — add endpoints here
+│   │   ├── config.py        # Settings via pydantic-settings (.env)
+│   │   └── security.py      # verify_api_key dependency (X-API-Key header)
+│   ├── api/
+│   │   └── v1/
+│   │       ├── router.py    # v1 router
+│   │       └── media/
+│   │           └── router.py  # Image and video compression endpoints
+│   └── services/
+│       └── image_compressor.py  # In-memory compression logic (Pillow)
 ├── scripts/
 │   ├── linux/
 │   │   ├── setup.sh         # One-time VPS setup
@@ -352,16 +448,45 @@ vps_optimus_api/
 │       ├── setup.ps1        # One-time local setup (Windows)
 │       └── deploy.ps1       # Pull + package check + local restart
 ├── requirements.txt
-├── .env.example
+├── optimus-api.service      # systemd service file reference
 └── README.md
 ```
 
-### Root route response
+### Endpoints
+
+| Method | Route | Auth | Description |
+|---|---|---|---|
+| `GET` | `/` | No | API status |
+| `GET` | `/guide` | No | Interactive bilingual guide (HTML) |
+| `POST` | `/api/v1/media/images/compress` | Yes | Image compression |
+| `POST` | `/api/v1/media/videos/compress` | Yes | Video compression (501 stub) |
+
+**POST `/api/v1/media/images/compress`** — multipart/form-data
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `files` | `File[]` | Yes | Up to 10 images (jpg, png, webp). Max 50 MB/file, 200 MB total |
+| `out` | `string` | No | Output format: `jpg`, `webp`, `png` |
+| `size` | `int` | No | Max pixel dimension on longest side (1–8000) |
+
+Response: single file → direct `StreamingResponse` · multiple → ZIP.
+
+Response headers:
+```
+X-Optimus-Status: complete | partial | timeout
+X-Optimus-Processed: <int>
+X-Optimus-Total: <int>
+```
+
+### Authentication
+
+All endpoints under `/api/v1/` require the `X-API-Key` header:
 
 ```
-GET /
-→ {"name": "OptimusApi", "version": "1.0.0", "status": "ok"}
+X-API-Key: your_api_key
 ```
+
+The value is set in `.env` as `API_KEY`. Missing or incorrect key returns 401.
 
 ### Scripts
 
@@ -559,6 +684,8 @@ server {
     ssl_certificate     /etc/nginx/ssl/origin.crt;
     ssl_certificate_key /etc/nginx/ssl/origin.key;
 
+    client_max_body_size 200m;
+
     location / {
         proxy_pass         http://127.0.0.1:8000;
         proxy_set_header   Host $host;
@@ -601,17 +728,66 @@ curl https://api.yourdomain.com
 # → git pull → checks packages → restarts the service
 ```
 
-### Adding a new API version
+#### 9. Security & rate limiting
 
-1. Create `app/api/v2/` with `__init__.py` and `router.py`
-2. Register it in `app/main.py`:
+**Request body size limit**
 
-```python
-from app.api.v2.router import router as v2_router
-app.include_router(v2_router, prefix="/api/v2")
+Already included in the `listen 443 ssl` block from step 7 as `client_max_body_size 200m;`. nginx returns 413 before the request reaches the app.
+
+**nginx rate limiting**
+
+Create the zone file (files in `conf.d/` are included inside nginx.conf's `http {}` block):
+
+```bash
+sudo tee /etc/nginx/conf.d/rate-limit.conf <<'EOF'
+limit_req_zone $http_cf_connecting_ip zone=api:10m rate=5r/s;
+EOF
 ```
 
-> Single `.venv` for all versions. Packages are installed **once**, no duplication.
+Add `limit_req` inside the `location /` block in `optimus.conf`:
+
+```nginx
+location / {
+    limit_req zone=api burst=20 nodelay;
+
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+> `$http_cf_connecting_ip` is used instead of `$binary_remote_addr` because nginx sits behind Cloudflare — that header carries the real user IP. `5r/s` with `burst=20 nodelay` allows short bursts without extra delay, then rejects with 429.
+
+**fail2ban — SSH brute force protection**
+
+Requires enabling the EPEL repository first (Oracle Linux 9):
+
+```bash
+sudo dnf config-manager --set-enabled ol9_developer_EPEL
+sudo dnf install -y fail2ban
+sudo systemctl enable --now fail2ban
+```
+
+Enable the SSH jail:
+
+```bash
+sudo tee /etc/fail2ban/jail.local <<'EOF'
+[sshd]
+enabled = true
+EOF
+
+sudo systemctl restart fail2ban
+sudo fail2ban-client status sshd
+```
+
+> Default: 5 failed attempts → 10-minute ban.
+> Oracle Cloud already disables password-based SSH authentication via `50-cloud-init.conf` — only the private key works.
 
 ### Environment variables
 
@@ -620,5 +796,7 @@ app.include_router(v2_router, prefix="/api/v2")
 | `PROJECT_NAME` | `OptimusApi` | API name |
 | `API_VERSION` | `1.0.0` | Version reported at `/` |
 | `DEBUG` | `false` | Enables `/docs`, `/redoc`, `/openapi.json` |
+| `API_KEY` | `` | Authentication key for protected endpoints |
 
 > `DEBUG=false` in production disables auto-generated docs — keeps the API structure hidden.
+> `API_KEY` should be a random string of sufficient length (recommended: 32+ hex characters).
