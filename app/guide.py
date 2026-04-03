@@ -161,7 +161,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
   <div class="header-links">
     <a href="https://www.azanorivers.com/" target="_blank" rel="noopener">&#x1F464; AzanoRivers</a>
     <a href="https://github.com/azanoRivers" target="_blank" rel="noopener">&#x1F4BB; GitHub</a>
-    <a href="https://www.azanolabs.com/" target="_blank" rel="noopener">&#x1F9EA; Experiments &mdash; AzanoLabs</a>
+    <a href="https://www.azanolabs.com/" target="_blank" rel="noopener">&#x1F9EA; AzanoLabs</a>
   </div>
 </div>
 
