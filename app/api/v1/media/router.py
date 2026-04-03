@@ -4,7 +4,7 @@ import time
 import zipfile
 from io import BytesIO
 from pathlib import Path
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -36,8 +36,8 @@ router = APIRouter(
 @router.post("/images/compress")
 def compress_images(
     files: Annotated[List[UploadFile], File()],
-    out: Annotated[str | None, Form()] = None,
-    size: Annotated[int | None, Form()] = None,
+    out: Annotated[Optional[str], Form()] = None,
+    size: Annotated[Optional[int], Form()] = None,
 ) -> StreamingResponse:
     # ── Validate params ──────────────────────────────────────────────────────
     if not files:

@@ -25,8 +25,8 @@ SUPPORTED_OUTPUT_FORMATS = {"jpg", "webp", "png"}
 def compress_image(
     data: bytes,
     original_ext: str,
-    out_format: str | None = None,
-    max_size: int | None = None,
+    out_format: Optional[str] = None,
+    max_size: Optional[int] = None,
 ) -> tuple[BytesIO, str]:
     """
     Compress a single image in-memory.
