@@ -40,19 +40,19 @@ _GUIDE_HTML = """<!DOCTYPE html>
       padding: 0.2rem 0.7rem; border-radius: 20px; font-weight: 600;
     }
 
-    .container { max-width: 860px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+    .container { max-width: 860px; margin: 0 auto; padding: 2rem 1rem 4rem; }
 
     /* lang cards */
     .lang-picker {
-      display: flex; gap: 1rem; justify-content: center;
+      display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;
       margin-bottom: 2.5rem;
     }
     .lang-card {
       display: flex; align-items: center; gap: 0.75rem;
       background: #161b22; border: 2px solid #30363d; border-radius: 12px;
-      padding: 0.9rem 1.75rem; cursor: pointer;
+      padding: 0.9rem 1.5rem; cursor: pointer;
       transition: border-color 0.15s, background 0.15s;
-      user-select: none;
+      user-select: none; flex: 1 1 140px; max-width: 220px;
     }
     .lang-card:hover { border-color: #58a6ff; background: #1c2333; }
     .lang-card.active {
@@ -95,14 +95,14 @@ _GUIDE_HTML = """<!DOCTYPE html>
       background: #161b22; border: 1px solid #30363d;
       border-radius: 4px; padding: 0.1rem 0.4rem;
       font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.82rem;
-      color: #e6edf3;
+      color: #e6edf3; word-break: break-word;
     }
     pre {
       background: #161b22; border: 1px solid #30363d; border-radius: 8px;
       padding: 1rem 1.25rem; overflow-x: auto; margin-top: 0.75rem;
     }
     pre code {
-      background: none; border: none; padding: 0;
+      background: none; border: none; padding: 0; word-break: normal;
       font-size: 0.82rem; color: #e6edf3; line-height: 1.7;
     }
 
@@ -110,28 +110,34 @@ _GUIDE_HTML = """<!DOCTYPE html>
       background: #161b22; border: 1px solid #30363d; border-radius: 8px;
       padding: 1rem 1.25rem; margin-bottom: 1rem;
     }
+    .endpoint-header {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem;
+    }
     .method {
       display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px;
-      font-size: 0.75rem; font-weight: 700; margin-right: 0.5rem;
-      font-family: monospace;
+      font-size: 0.75rem; font-weight: 700; margin-right: 0.25rem;
+      font-family: monospace; white-space: nowrap;
     }
     .get  { background: #0e4429; color: #3fb950; }
     .post { background: #1f2d5a; color: #79c0ff; }
-    .path { font-family: monospace; font-size: 0.9rem; color: #f0f6fc; }
+    .path { font-family: monospace; font-size: 0.85rem; color: #f0f6fc; word-break: break-all; }
     .auth-badge {
-      float: right; font-size: 0.72rem; padding: 0.15rem 0.5rem;
+      margin-left: auto; font-size: 0.72rem; padding: 0.15rem 0.5rem;
       border-radius: 12px; border: 1px solid #30363d; color: #8b949e;
+      white-space: nowrap;
     }
     .auth-badge.required { border-color: #f0883e; color: #f0883e; }
 
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 0.75rem; }
     table {
       width: 100%; border-collapse: collapse; font-size: 0.85rem;
-      margin-top: 0.75rem;
+      min-width: 400px;
     }
     th {
       background: #161b22; color: #8b949e; text-align: left;
       padding: 0.5rem 0.75rem; border-bottom: 1px solid #30363d;
       font-weight: 600; font-size: 0.78rem; text-transform: uppercase;
+      white-space: nowrap;
     }
     td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #21262d; }
     tr:last-child td { border-bottom: none; }
@@ -149,6 +155,19 @@ _GUIDE_HTML = """<!DOCTYPE html>
       background: #1f2d5a; border-left: 3px solid #79c0ff;
       border-radius: 0 6px 6px 0;
       padding: 0.75rem 1rem; font-size: 0.85rem; margin-top: 0.75rem;
+    }
+
+    @media (max-width: 600px) {
+      .header h1 { font-size: 1.4rem; }
+      .header p  { font-size: 0.85rem; }
+      .header-links { gap: 0.8rem; }
+      .container { padding: 1.25rem 0.75rem 3rem; }
+      .lang-card { padding: 0.75rem 1rem; flex: 1 1 100%; max-width: 100%; }
+      .lang-picker { flex-direction: column; align-items: stretch; }
+      .endpoint-header { gap: 0.3rem; }
+      .auth-badge { margin-left: 0; }
+      pre { padding: 0.75rem; }
+      th, td { padding: 0.4rem 0.5rem; font-size: 0.78rem; }
     }
   </style>
 </head>
@@ -212,21 +231,27 @@ _GUIDE_HTML = """<!DOCTYPE html>
     <section id="en-endpoints">
       <h2>Endpoints</h2>
       <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/guide</span>
-        <span class="auth-badge">public</span>
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="path">/guide</span>
+          <span class="auth-badge">public</span>
+        </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">This page. HTML API reference guide.</p>
       </div>
       <div class="endpoint">
-        <span class="method post">POST</span>
-        <span class="path">/api/v1/media/images/compress</span>
-        <span class="auth-badge required">X-API-Key required</span>
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/media/images/compress</span>
+          <span class="auth-badge required">X-API-Key required</span>
+        </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">Compress one or more images. Accepts <code>multipart/form-data</code>. Returns a single compressed image or a ZIP archive.</p>
       </div>
       <div class="endpoint">
-        <span class="method post">POST</span>
-        <span class="path">/api/v1/media/videos/compress</span>
-        <span class="auth-badge required">X-API-Key required</span>
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/media/videos/compress</span>
+          <span class="auth-badge required">X-API-Key required</span>
+        </div>
         <p style="margin-top:0.5rem;font-size:0.85rem"><em>Not implemented yet.</em> Returns <code>501</code>.</p>
       </div>
     </section>
@@ -234,14 +259,14 @@ _GUIDE_HTML = """<!DOCTYPE html>
     <section id="en-params">
       <h2>Parameters &middot; POST /api/v1/media/images/compress</h2>
       <p>Send as <code>multipart/form-data</code>. All fields must be form fields, not query params.</p>
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
           <tr><td><code>files</code></td><td>file(s)</td><td>Yes</td><td>&middot;</td><td>1&ndash;10 images. Allowed: <code>.jpg</code> <code>.jpeg</code> <code>.png</code> <code>.webp</code></td></tr>
           <tr><td><code>out</code></td><td>string</td><td>No</td><td>keep original</td><td>Output format: <code>jpg</code>, <code>webp</code>, or <code>png</code></td></tr>
           <tr><td><code>size</code></td><td>integer</td><td>No</td><td>no resize</td><td>Max pixel on longest side (1&ndash;8000). Aspect ratio preserved.</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section id="en-limits">
@@ -263,7 +288,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
         <li><strong>Multiple images:</strong> ZIP archive (<code>application/zip</code>, filename: <code>compressed_images.zip</code>)</li>
       </ul>
       <h3>Custom response headers</h3>
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>Header</th><th>Values</th><th>Meaning</th></tr></thead>
         <tbody>
           <tr><td><code>X-Optimus-Status</code></td><td><code>complete</code> / <code>partial</code></td><td>Whether all images were processed</td></tr>
@@ -271,12 +296,12 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <tr><td><code>X-Optimus-Total</code></td><td>integer</td><td>Total images received</td></tr>
           <tr><td><code>Access-Control-Expose-Headers</code></td><td>list</td><td>Exposes X-Optimus-* to browser fetch()</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section id="en-status">
       <h2>HTTP Status Codes</h2>
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
         <tbody class="status-row">
           <tr><td class="s200">200</td><td>All images processed</td></tr>
@@ -286,7 +311,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <tr><td class="s422">422</td><td>Validation error (bad params, unsupported format, file too large&hellip;)</td></tr>
           <tr><td class="s501">501</td><td>Video compression not implemented</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section id="en-examples">
@@ -347,21 +372,27 @@ _GUIDE_HTML = """<!DOCTYPE html>
     <section id="es-endpoints">
       <h2>Endpoints</h2>
       <div class="endpoint">
-        <span class="method get">GET</span>
-        <span class="path">/guide</span>
-        <span class="auth-badge">p&uacute;blico</span>
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="path">/guide</span>
+          <span class="auth-badge">p&uacute;blico</span>
+        </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">Esta p&aacute;gina. Referencia de la API en HTML.</p>
       </div>
       <div class="endpoint">
-        <span class="method post">POST</span>
-        <span class="path">/api/v1/media/images/compress</span>
-        <span class="auth-badge required">X-API-Key requerido</span>
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/media/images/compress</span>
+          <span class="auth-badge required">X-API-Key requerido</span>
+        </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">Comprime una o varias im&aacute;genes. Acepta <code>multipart/form-data</code>. Devuelve la imagen comprimida o un ZIP.</p>
       </div>
       <div class="endpoint">
-        <span class="method post">POST</span>
-        <span class="path">/api/v1/media/videos/compress</span>
-        <span class="auth-badge required">X-API-Key requerido</span>
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/media/videos/compress</span>
+          <span class="auth-badge required">X-API-Key requerido</span>
+        </div>
         <p style="margin-top:0.5rem;font-size:0.85rem"><em>No implementado todav&iacute;a.</em> Devuelve <code>501</code>.</p>
       </div>
     </section>
@@ -369,14 +400,14 @@ _GUIDE_HTML = """<!DOCTYPE html>
     <section id="es-params">
       <h2>Par&aacute;metros &middot; POST /api/v1/media/images/compress</h2>
       <p>Enviar como <code>multipart/form-data</code>. Todos los campos deben ser campos de formulario, no query params.</p>
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>Campo</th><th>Tipo</th><th>Requerido</th><th>Default</th><th>Descripci&oacute;n</th></tr></thead>
         <tbody>
           <tr><td><code>files</code></td><td>archivo(s)</td><td>S&iacute;</td><td>&middot;</td><td>1&ndash;10 im&aacute;genes. Permitidos: <code>.jpg</code> <code>.jpeg</code> <code>.png</code> <code>.webp</code></td></tr>
           <tr><td><code>out</code></td><td>string</td><td>No</td><td>conservar</td><td>Formato de salida: <code>jpg</code>, <code>webp</code>, o <code>png</code></td></tr>
           <tr><td><code>size</code></td><td>entero</td><td>No</td><td>sin resize</td><td>Dimensi&oacute;n m&aacute;xima (lado m&aacute;s largo, 1&ndash;8000). Proporci&oacute;n conservada.</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section id="es-limits">
@@ -398,7 +429,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
         <li><strong>Varias im&aacute;genes:</strong> ZIP (<code>application/zip</code>, nombre: <code>compressed_images.zip</code>)</li>
       </ul>
       <h3>Headers de respuesta personalizados</h3>
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>Header</th><th>Valores</th><th>Significado</th></tr></thead>
         <tbody>
           <tr><td><code>X-Optimus-Status</code></td><td><code>complete</code> / <code>partial</code></td><td>Si se procesaron todas las im&aacute;genes</td></tr>
@@ -406,12 +437,12 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <tr><td><code>X-Optimus-Total</code></td><td>entero</td><td>Total de im&aacute;genes recibidas</td></tr>
           <tr><td><code>Access-Control-Expose-Headers</code></td><td>lista</td><td>Expone los X-Optimus-* al fetch() del navegador</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section id="es-status">
       <h2>C&oacute;digos de estado HTTP</h2>
-      <table>
+      <div class="table-wrap"><table>
         <thead><tr><th>C&oacute;digo</th><th>Significado</th></tr></thead>
         <tbody class="status-row">
           <tr><td class="s200">200</td><td>Todas las im&aacute;genes procesadas</td></tr>
@@ -421,7 +452,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <tr><td class="s422">422</td><td>Error de validaci&oacute;n (params inv&aacute;lidos, formato no soportado, archivo muy grande&hellip;)</td></tr>
           <tr><td class="s501">501</td><td>Compresi&oacute;n de video no implementada</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section id="es-examples">
