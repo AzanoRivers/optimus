@@ -159,11 +159,6 @@ def compress_images(
     )
     input_bytes_total = sum(len(d) for _, d, _ in file_data)
     output_bytes_total = sum(len(b) for _, b in results)
-    exposed = (
-        "X-Optimus-Status, X-Optimus-Processed, X-Optimus-Total, "
-        "X-Optimus-Input-Size, X-Optimus-Output-Size, X-Optimus-Reduction-Pct, "
-        "X-Optimus-Debug-Out, X-Optimus-Debug-Size"
-    )
     reduction_pct = (
         round((1 - output_bytes_total / input_bytes_total) * 100, 1)
         if input_bytes_total > 0
@@ -176,9 +171,10 @@ def compress_images(
         "X-Optimus-Input-Size": str(input_bytes_total),
         "X-Optimus-Output-Size": str(output_bytes_total),
         "X-Optimus-Reduction-Pct": str(reduction_pct),
-        "X-Optimus-Debug-Out": str(out) if out is not None else "None",
-        "X-Optimus-Debug-Size": str(size) if size is not None else "None",
-        "Access-Control-Expose-Headers": exposed,
+        "Access-Control-Expose-Headers": (
+            "X-Optimus-Status, X-Optimus-Processed, X-Optimus-Total, "
+            "X-Optimus-Input-Size, X-Optimus-Output-Size, X-Optimus-Reduction-Pct"
+        ),
     }
 
     # ── Single image → direct StreamingResponse ──────────────────────────────

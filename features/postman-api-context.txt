@@ -1,0 +1,150 @@
+================================================================================
+OPTIMUS API — CONTEXTO DE SOLICITUDES, ERRORES Y SOLUCIONES
+Fecha: 09 Abril 2026
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+1. ENDPOINT PRINCIPAL
+────────────────────────────────────────────────────────────────────────────────
+
+POST https://optimus.azanolabs.com/api/v1/media/images/compress
+
+Header obligatorio:
+  X-API-Key: <tu_api_key>
+
+Body: form-data
+  - files   → tipo File  → imagen(es) a comprimir (máx 10, máx 50MB c/u)
+
+Parámetros opcionales (SOLO como query params en la URL, NO en form-data):
+  - out=webp | jpg | png   → convierte al formato indicado
+  - size=1920              → redimensiona al máx de píxeles indicado (lado largo)
+  - lossy=true             → aplica cuantización PNG (pngquant-style, solo aplica si out=png o sin out)
+
+Ejemplos de URL:
+  /compress                          → comprime manteniendo formato original
+  /compress?out=webp                 → convierte a WebP (mayor compresión)
+  /compress?lossy=true               → PNG cuantizado (~80% reducción)
+  /compress?out=webp&size=1920       → WebP + resize
+  /compress?lossy=true&size=1920     → PNG lossy + resize
+
+
+────────────────────────────────────────────────────────────────────────────────
+2. HEADERS DE RESPUESTA ÚTILES
+────────────────────────────────────────────────────────────────────────────────
+
+  X-Optimus-Status          → "complete" o "partial"
+  X-Optimus-Processed       → cantidad de imágenes procesadas
+  X-Optimus-Total           → cantidad de imágenes enviadas
+  X-Optimus-Input-Size      → bytes totales recibidos
+  X-Optimus-Output-Size     → bytes totales del resultado
+  X-Optimus-Reduction-Pct   → % de reducción (ej: 83.6)
+
+
+────────────────────────────────────────────────────────────────────────────────
+3. RESULTADOS DE COMPRESIÓN POR MODO (imagen de prueba: 2.95 MB PNG)
+────────────────────────────────────────────────────────────────────────────────
+
+  Sin parámetros (PNG → PNG lossless):   ~2.94 MB   0.4% reducción
+  ?lossy=true    (PNG → PNG cuantizado): ~497 KB    83.6% reducción
+  ?out=webp      (PNG → WebP lossy):     ~202 KB    93.3% reducción
+
+  Conclusión: para fotos/wallpapers, out=webp es siempre la mejor opción.
+  lossy=true es útil cuando el cliente necesita mantener formato PNG.
+
+
+────────────────────────────────────────────────────────────────────────────────
+4. PROBLEMA CRÍTICO EN POSTMAN — CAMPOS FORM-DATA NO LLEGAN AL SERVIDOR
+────────────────────────────────────────────────────────────────────────────────
+
+SÍNTOMA:
+  Los campos de texto en el Body (form-data) como "out" o "size" llegan como
+  None al servidor, aunque en Postman se vean correctamente configurados.
+  El archivo (files) sí llega sin problema.
+
+CAUSA:
+  Bug conocido de Postman con multipart/form-data cuando hay headers
+  auto-generados que interfieren con el boundary del multipart.
+
+SOLUCIÓN PERMANENTE:
+  NUNCA usar los parámetros "out", "size", "lossy" en el Body de Postman.
+  Siempre ponerlos como QUERY PARAMS directamente en la URL:
+
+  ✅ CORRECTO:
+     URL: https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp
+     Body form-data: solo el campo "files"
+
+  ❌ INCORRECTO (no funciona desde Postman):
+     URL: https://optimus.azanolabs.com/api/v1/media/images/compress
+     Body form-data: files + out (texto) + size (texto)
+
+NOTA PARA CMS:
+  Si el CMS envía los parámetros via form-data (multipart), SÍ funciona
+  correctamente desde código (axios, fetch, curl). El bug es exclusivo de
+  Postman. Desde código siempre llegaron bien en las pruebas con curl.
+
+
+────────────────────────────────────────────────────────────────────────────────
+5. ERRORES ENCONTRADOS Y CORREGIDOS
+────────────────────────────────────────────────────────────────────────────────
+
+ERROR 1: PNG → PNG sin reducción visible
+  Causa:    PNG es lossless. Sin conversión de formato, Pillow solo aplica
+            deflate que da 0-2% en fotos complejas.
+  Solución: Usar out=webp para conversión lossy, o lossy=true para cuantización.
+
+ERROR 2: ValueError en quantize() con imágenes RGBA
+  Mensaje:  "Fast Octree (method == 2) and libimagequant (method == 3) are
+             the only valid methods for quantizing RGBA images"
+  Causa:    Se usó MEDIANCUT para cuantización, que no soporta canal alpha.
+  Fix:      Cambiado a FASTOCTREE que soporta RGB y RGBA.
+  Archivo:  app/services/image_compressor.py → función _quantize_png()
+
+ERROR 3: Excepciones silenciosas (408 sin información)
+  Causa:    El bloque except Exception: pass tragaba todos los errores.
+  Fix:      Cambiado a logger.exception() para registrar en journalctl.
+  Diagnóstico: journalctl -u optimus-api -n 50 --no-pager
+
+
+────────────────────────────────────────────────────────────────────────────────
+6. MEJORAS APLICADAS AL COMPRESOR
+────────────────────────────────────────────────────────────────────────────────
+
+  - JPG: agregado progressive=True → 5-10% más pequeño
+  - PNG: agregado compress_level=9 → máxima compresión deflate
+  - Stripping de metadata ICC y EXIF antes de guardar
+  - Soporte lossy PNG via cuantización FASTOCTREE a 256 colores
+  - Query params: out, size, lossy aceptados en la URL además de form-data
+
+
+────────────────────────────────────────────────────────────────────────────────
+7. CÓMO DIAGNOSTICAR FUTUROS ERRORES EN VPS
+────────────────────────────────────────────────────────────────────────────────
+
+  # Ver logs del servicio en tiempo real:
+  journalctl -u optimus-api -f
+
+  # Ver últimas 50 líneas:
+  journalctl -u optimus-api -n 50 --no-pager
+
+  # Verificar estado del servicio:
+  systemctl status optimus-api
+
+  # Deploy de nueva versión:
+  ./scripts/linux/deploy.sh
+
+
+────────────────────────────────────────────────────────────────────────────────
+8. PRUEBA RÁPIDA VIA CURL (sin depender de Postman)
+────────────────────────────────────────────────────────────────────────────────
+
+  curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp" \
+    -H "X-API-Key: TU_API_KEY" \
+    -F "files=@/ruta/imagen.png" \
+    -D - \
+    -o resultado.webp
+
+  # Ver solo headers de respuesta:
+  ... | grep -i "x-optimus"
+
+================================================================================
