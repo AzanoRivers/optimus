@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 import zipfile
 from io import BytesIO
@@ -23,6 +24,8 @@ from app.services.image_compressor import (
     SUPPORTED_INPUT_EXTENSIONS,
     compress_image,
 )
+
+logger = logging.getLogger(__name__)
 
 _MAX_FILES = 10
 _MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -132,8 +135,8 @@ def compress_images(
             buf, out_ext = compress_image(data, original_ext, out, size, lossy_png)
             stem = Path(original_name).stem
             results.append((f"{stem}.{out_ext}", buf.read()))
-        except Exception:
-            pass  # Skip corrupt/unreadable files — don't abort the batch
+        except Exception as exc:
+            logger.exception("Failed to compress '%s': %s", original_name, exc)
 
         if time.time() - start >= _TIMEOUT_SECONDS:
             break
