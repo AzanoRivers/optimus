@@ -132,13 +132,25 @@ def compress_images(
         if optimus_status == "complete"
         else status.HTTP_206_PARTIAL_CONTENT
     )
+    input_bytes_total = sum(len(d) for _, d, _ in file_data)
+    output_bytes_total = sum(len(b) for _, b in results)
+    exposed = (
+        "X-Optimus-Status, X-Optimus-Processed, X-Optimus-Total, "
+        "X-Optimus-Input-Size, X-Optimus-Output-Size, X-Optimus-Reduction-Pct"
+    )
+    reduction_pct = (
+        round((1 - output_bytes_total / input_bytes_total) * 100, 1)
+        if input_bytes_total > 0
+        else 0
+    )
     headers = {
         "X-Optimus-Status": optimus_status,
         "X-Optimus-Processed": str(processed),
         "X-Optimus-Total": str(total),
-        "Access-Control-Expose-Headers": (
-            "X-Optimus-Status, X-Optimus-Processed, X-Optimus-Total"
-        ),
+        "X-Optimus-Input-Size": str(input_bytes_total),
+        "X-Optimus-Output-Size": str(output_bytes_total),
+        "X-Optimus-Reduction-Pct": str(reduction_pct),
+        "Access-Control-Expose-Headers": exposed,
     }
 
     # ── Single image → direct StreamingResponse ──────────────────────────────
