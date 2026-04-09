@@ -7,9 +7,9 @@ from PIL import Image
 
 # Pillow save parameters per output format (keyed by extension without dot)
 _FORMAT_SAVE_PARAMS: dict[str, dict] = {
-    "jpg": {"format": "JPEG", "quality": 75, "optimize": True},
-    "jpeg": {"format": "JPEG", "quality": 75, "optimize": True},
-    "png": {"format": "PNG", "optimize": True},
+    "jpg": {"format": "JPEG", "quality": 75, "optimize": True, "progressive": True},
+    "jpeg": {"format": "JPEG", "quality": 75, "optimize": True, "progressive": True},
+    "png": {"format": "PNG", "optimize": True, "compress_level": 9},
     "webp": {"format": "WEBP", "quality": 75, "method": 6},
 }
 
@@ -54,6 +54,10 @@ def compress_image(
         raise ValueError(f"Unsupported output format: '{target_ext}'")
 
     img = Image.open(BytesIO(data))
+
+    # Strip embedded metadata (ICC profiles, EXIF, text chunks) to reduce output size.
+    img.info.pop("icc_profile", None)
+    img.info.pop("exif", None)
 
     # Resize to fit within max_size × max_size, preserving aspect ratio.
     # thumbnail() never upscales — images already within bounds are untouched.
