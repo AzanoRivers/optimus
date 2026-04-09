@@ -258,15 +258,21 @@ _GUIDE_HTML = """<!DOCTYPE html>
 
     <section id="en-params">
       <h2>Parameters &middot; POST /api/v1/media/images/compress</h2>
-      <p>Send as <code>multipart/form-data</code>. All fields must be form fields, not query params.</p>
+      <p>The <code>files</code> field must be sent as <code>multipart/form-data</code>. The optional parameters <code>out</code>, <code>size</code>, and <code>lossy</code> are accepted both as form fields <strong>or as URL query params</strong>. Using query params in the URL is recommended to avoid multipart parsing issues with some clients (e.g. Postman).</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Default</th><th>Description</th></tr></thead>
         <tbody>
           <tr><td><code>files</code></td><td>file(s)</td><td>Yes</td><td>&middot;</td><td>1&ndash;10 images. Allowed: <code>.jpg</code> <code>.jpeg</code> <code>.png</code> <code>.webp</code></td></tr>
-          <tr><td><code>out</code></td><td>string</td><td>No</td><td>keep original</td><td>Output format: <code>jpg</code>, <code>webp</code>, or <code>png</code></td></tr>
-          <tr><td><code>size</code></td><td>integer</td><td>No</td><td>no resize</td><td>Max pixel on longest side (1&ndash;8000). Aspect ratio preserved.</td></tr>
+          <tr><td><code>out</code></td><td>string</td><td>No</td><td>keep original</td><td>Output format: <code>jpg</code>, <code>webp</code>, or <code>png</code>. Converts all images to the specified format.</td></tr>
+          <tr><td><code>size</code></td><td>integer</td><td>No</td><td>no resize</td><td>Max pixels on longest side (1&ndash;8000). Aspect ratio preserved. Never upscales.</td></tr>
+          <tr><td><code>lossy</code></td><td>boolean</td><td>No</td><td>false</td><td>Lossy PNG compression via color quantization (pngquant-style, 256 colors). Only applies when output format is PNG. Achieves ~80% size reduction. Ignored if <code>out=webp</code> or <code>out=jpg</code>.</td></tr>
         </tbody>
       </table></div>
+      <div class="note">
+        <strong>Recommended usage from Postman or any client:</strong> put <code>out</code>, <code>size</code>, and <code>lossy</code> as URL query params, not as form fields.<br>
+        <code>POST /api/v1/media/images/compress?out=webp&amp;size=1920</code><br>
+        <code>POST /api/v1/media/images/compress?lossy=true</code>
+      </div>
     </section>
 
     <section id="en-limits">
@@ -294,6 +300,9 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <tr><td><code>X-Optimus-Status</code></td><td><code>complete</code> / <code>partial</code></td><td>Whether all images were processed</td></tr>
           <tr><td><code>X-Optimus-Processed</code></td><td>integer</td><td>Images successfully compressed</td></tr>
           <tr><td><code>X-Optimus-Total</code></td><td>integer</td><td>Total images received</td></tr>
+          <tr><td><code>X-Optimus-Input-Size</code></td><td>bytes</td><td>Total size of all input images</td></tr>
+          <tr><td><code>X-Optimus-Output-Size</code></td><td>bytes</td><td>Total size of all compressed results</td></tr>
+          <tr><td><code>X-Optimus-Reduction-Pct</code></td><td>float</td><td>Size reduction percentage (e.g. <code>83.6</code>)</td></tr>
           <tr><td><code>Access-Control-Expose-Headers</code></td><td>list</td><td>Exposes X-Optimus-* to browser fetch()</td></tr>
         </tbody>
       </table></div>
@@ -316,31 +325,38 @@ _GUIDE_HTML = """<!DOCTYPE html>
 
     <section id="en-examples">
       <h2>curl Examples</h2>
-      <h3>Compress a single image</h3>
+      <h3>Compress keeping original format</h3>
       <pre><code>curl -X POST https://optimus.azanolabs.com/api/v1/media/images/compress \\
   -H "X-API-Key: your-key" \\
   -F "files=@photo.jpg" \\
   --output compressed.jpg</code></pre>
-      <h3>Convert to WebP and resize to max 1200 px</h3>
-      <pre><code>curl -X POST https://optimus.azanolabs.com/api/v1/media/images/compress \\
+      <h3>Convert to WebP (recommended &mdash; highest compression)</h3>
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp" \\
   -H "X-API-Key: your-key" \\
   -F "files=@photo.png" \\
-  -F "out=webp" \\
-  -F "size=1200" \\
+  --output compressed.webp</code></pre>
+      <h3>Lossy PNG &mdash; keep PNG format, ~80% reduction</h3>
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?lossy=true" \\
+  -H "X-API-Key: your-key" \\
+  -F "files=@photo.png" \\
+  --output compressed.png</code></pre>
+      <h3>Convert to WebP and resize to max 1920 px</h3>
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp&amp;size=1920" \\
+  -H "X-API-Key: your-key" \\
+  -F "files=@photo.png" \\
   --output compressed.webp</code></pre>
       <h3>Batch &middot; multiple images &rarr; ZIP</h3>
-      <pre><code>curl -X POST https://optimus.azanolabs.com/api/v1/media/images/compress \\
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp" \\
   -H "X-API-Key: your-key" \\
   -F "files=@photo1.jpg" \\
   -F "files=@photo2.png" \\
   -F "files=@photo3.webp" \\
-  -F "out=webp" \\
   --output result.zip</code></pre>
       <h3>Read response headers</h3>
-      <pre><code>curl -X POST https://optimus.azanolabs.com/api/v1/media/images/compress \\
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp" \\
   -H "X-API-Key: your-key" \\
   -F "files=@photo.jpg" \\
-  -D - --output compressed.jpg 2&gt;&amp;1 | grep -i "x-optimus"</code></pre>
+  -D - --output compressed.webp 2&gt;&amp;1 | grep -i "x-optimus"</code></pre>
     </section>
 
   </div><!-- #lang-en -->
@@ -399,15 +415,21 @@ _GUIDE_HTML = """<!DOCTYPE html>
 
     <section id="es-params">
       <h2>Par&aacute;metros &middot; POST /api/v1/media/images/compress</h2>
-      <p>Enviar como <code>multipart/form-data</code>. Todos los campos deben ser campos de formulario, no query params.</p>
+      <p>El campo <code>files</code> debe enviarse como <code>multipart/form-data</code>. Los par&aacute;metros opcionales <code>out</code>, <code>size</code> y <code>lossy</code> se aceptan tanto como campos de formulario <strong>como query params en la URL</strong>. Se recomienda usar query params para evitar problemas de parseo multipart en algunos clientes (ej. Postman).</p>
       <div class="table-wrap"><table>
         <thead><tr><th>Campo</th><th>Tipo</th><th>Requerido</th><th>Default</th><th>Descripci&oacute;n</th></tr></thead>
         <tbody>
           <tr><td><code>files</code></td><td>archivo(s)</td><td>S&iacute;</td><td>&middot;</td><td>1&ndash;10 im&aacute;genes. Permitidos: <code>.jpg</code> <code>.jpeg</code> <code>.png</code> <code>.webp</code></td></tr>
-          <tr><td><code>out</code></td><td>string</td><td>No</td><td>conservar</td><td>Formato de salida: <code>jpg</code>, <code>webp</code>, o <code>png</code></td></tr>
-          <tr><td><code>size</code></td><td>entero</td><td>No</td><td>sin resize</td><td>Dimensi&oacute;n m&aacute;xima (lado m&aacute;s largo, 1&ndash;8000). Proporci&oacute;n conservada.</td></tr>
+          <tr><td><code>out</code></td><td>string</td><td>No</td><td>conservar</td><td>Formato de salida: <code>jpg</code>, <code>webp</code> o <code>png</code>. Convierte todas las im&aacute;genes al formato indicado.</td></tr>
+          <tr><td><code>size</code></td><td>entero</td><td>No</td><td>sin resize</td><td>Dimensi&oacute;n m&aacute;xima en el lado m&aacute;s largo (1&ndash;8000). Proporci&oacute;n conservada. Nunca amplía.</td></tr>
+          <tr><td><code>lossy</code></td><td>boolean</td><td>No</td><td>false</td><td>Compresi&oacute;n PNG lossy mediante cuantizaci&oacute;n de color (estilo pngquant, 256 colores). Solo aplica cuando el formato de salida es PNG. Logra ~80% de reducci&oacute;n. Ignorado si <code>out=webp</code> o <code>out=jpg</code>.</td></tr>
         </tbody>
       </table></div>
+      <div class="note">
+        <strong>Uso recomendado desde Postman o cualquier cliente:</strong> poner <code>out</code>, <code>size</code> y <code>lossy</code> como query params en la URL, no como campos de formulario.<br>
+        <code>POST /api/v1/media/images/compress?out=webp&amp;size=1920</code><br>
+        <code>POST /api/v1/media/images/compress?lossy=true</code>
+      </div>
     </section>
 
     <section id="es-limits">
@@ -435,6 +457,9 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <tr><td><code>X-Optimus-Status</code></td><td><code>complete</code> / <code>partial</code></td><td>Si se procesaron todas las im&aacute;genes</td></tr>
           <tr><td><code>X-Optimus-Processed</code></td><td>entero</td><td>Im&aacute;genes comprimidas exitosamente</td></tr>
           <tr><td><code>X-Optimus-Total</code></td><td>entero</td><td>Total de im&aacute;genes recibidas</td></tr>
+          <tr><td><code>X-Optimus-Input-Size</code></td><td>bytes</td><td>Tama&ntilde;o total de las im&aacute;genes de entrada</td></tr>
+          <tr><td><code>X-Optimus-Output-Size</code></td><td>bytes</td><td>Tama&ntilde;o total del resultado comprimido</td></tr>
+          <tr><td><code>X-Optimus-Reduction-Pct</code></td><td>float</td><td>Porcentaje de reducci&oacute;n (ej. <code>83.6</code>)</td></tr>
           <tr><td><code>Access-Control-Expose-Headers</code></td><td>lista</td><td>Expone los X-Optimus-* al fetch() del navegador</td></tr>
         </tbody>
       </table></div>
@@ -457,25 +482,32 @@ _GUIDE_HTML = """<!DOCTYPE html>
 
     <section id="es-examples">
       <h2>Ejemplos con curl</h2>
-      <h3>Comprimir una imagen (conservar formato)</h3>
+      <h3>Comprimir conservando el formato original</h3>
       <pre><code>curl -X POST https://optimus.azanolabs.com/api/v1/media/images/compress \\
   -H "X-API-Key: tu-clave" \\
   -F "files=@foto.jpg" \\
   --output comprimido.jpg</code></pre>
-      <h3>Convertir a WebP y redimensionar a m&aacute;x. 1200 px</h3>
-      <pre><code>curl -X POST https://optimus.azanolabs.com/api/v1/media/images/compress \\
+      <h3>Convertir a WebP (recomendado &mdash; m&aacute;xima compresi&oacute;n)</h3>
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp" \\
   -H "X-API-Key: tu-clave" \\
   -F "files=@foto.png" \\
-  -F "out=webp" \\
-  -F "size=1200" \\
+  --output comprimido.webp</code></pre>
+      <h3>PNG lossy &mdash; conservar formato PNG, ~80% de reducci&oacute;n</h3>
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?lossy=true" \\
+  -H "X-API-Key: tu-clave" \\
+  -F "files=@foto.png" \\
+  --output comprimido.png</code></pre>
+      <h3>Convertir a WebP y redimensionar a m&aacute;x. 1920 px</h3>
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp&amp;size=1920" \\
+  -H "X-API-Key: tu-clave" \\
+  -F "files=@foto.png" \\
   --output comprimido.webp</code></pre>
       <h3>Lote &middot; varias im&aacute;genes &rarr; ZIP</h3>
-      <pre><code>curl -X POST https://optimus.azanolabs.com/api/v1/media/images/compress \\
+      <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp" \\
   -H "X-API-Key: tu-clave" \\
   -F "files=@foto1.jpg" \\
   -F "files=@foto2.png" \\
   -F "files=@foto3.webp" \\
-  -F "out=webp" \\
   --output resultado.zip</code></pre>
     </section>
 
