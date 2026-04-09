@@ -6,7 +6,16 @@ from io import BytesIO
 from pathlib import Path
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.responses import StreamingResponse
 
 from app.core.security import verify_api_key
@@ -38,7 +47,20 @@ def compress_images(
     files: Annotated[List[UploadFile], File()],
     out: Annotated[Optional[str], Form()] = None,
     size: Annotated[Optional[int], Form()] = None,
+    lossy: Annotated[Optional[bool], Form()] = None,
+    out_q: Annotated[Optional[str], Query(alias="out", include_in_schema=False)] = None,
+    size_q: Annotated[
+        Optional[int], Query(alias="size", include_in_schema=False)
+    ] = None,
+    lossy_q: Annotated[
+        Optional[bool], Query(alias="lossy", include_in_schema=False)
+    ] = None,
 ) -> StreamingResponse:
+    # ── Merge form fields with query params (query params as fallback) ────────
+    out = out if out is not None else out_q
+    size = size if size is not None else size_q
+    lossy_png = bool(lossy if lossy is not None else lossy_q)
+
     # ── Validate params ──────────────────────────────────────────────────────
     if not files:
         raise HTTPException(
@@ -107,7 +129,7 @@ def compress_images(
 
     for original_name, data, original_ext in file_data:
         try:
-            buf, out_ext = compress_image(data, original_ext, out, size)
+            buf, out_ext = compress_image(data, original_ext, out, size, lossy_png)
             stem = Path(original_name).stem
             results.append((f"{stem}.{out_ext}", buf.read()))
         except Exception:

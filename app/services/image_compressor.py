@@ -23,11 +23,29 @@ SUPPORTED_INPUT_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 SUPPORTED_OUTPUT_FORMATS = {"jpg", "webp", "png"}
 
 
+def _quantize_png(img: Image.Image) -> Image.Image:
+    """
+    Lossy PNG compression via color palette reduction (pngquant-style).
+    Reduces image to 256 colors. Works best on logos/UI; may introduce
+    dithering on photographic gradients.
+    """
+    has_alpha = img.mode in ("RGBA", "LA", "PA")
+    if img.mode not in ("RGB", "RGBA"):
+        img = img.convert("RGBA" if has_alpha else "RGB")
+    quantized = img.quantize(
+        colors=256,
+        method=Image.Quantize.MEDIANCUT,
+        dither=Image.Dither.FLOYDSTEINBERG,
+    )
+    return quantized
+
+
 def compress_image(
     data: bytes,
     original_ext: str,
     out_format: Optional[str] = None,
     max_size: Optional[int] = None,
+    lossy_png: bool = False,
 ) -> tuple[BytesIO, str]:
     """
     Compress a single image in-memory.
@@ -37,6 +55,9 @@ def compress_image(
         original_ext: Source extension without dot, lowercase (e.g. "jpg").
         out_format:   Target format ("jpg", "webp", "png") or None to keep original.
         max_size:     Max pixel dimension on longest side, or None for no resize.
+        lossy_png:    When True and target format is PNG, apply color quantization
+                      (pngquant-style) for 60-80% size reduction at the cost of
+                      reducing to 256 colors.
 
     Returns:
         Tuple of (BytesIO buffer positioned at 0, output extension without dot).
@@ -81,6 +102,10 @@ def compress_image(
         # PNG and WEBP support RGBA; CMYK is still not ideal for web formats
         if img.mode == "CMYK":
             img = img.convert("RGB")
+
+    # Lossy PNG: quantize to 256-color palette before saving (pngquant-style)
+    if target_ext == "png" and lossy_png:
+        img = _quantize_png(img)
 
     buf = BytesIO()
     img.save(buf, **save_params)
