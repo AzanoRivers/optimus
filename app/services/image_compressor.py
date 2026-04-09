@@ -32,9 +32,10 @@ def _quantize_png(img: Image.Image) -> Image.Image:
     has_alpha = img.mode in ("RGBA", "LA", "PA")
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGBA" if has_alpha else "RGB")
+    # FASTOCTREE is the only method that supports RGBA; works fine for RGB too
     quantized = img.quantize(
         colors=256,
-        method=Image.Quantize.MEDIANCUT,
+        method=Image.Quantize.FASTOCTREE,
         dither=Image.Dither.FLOYDSTEINBERG,
     )
     return quantized
