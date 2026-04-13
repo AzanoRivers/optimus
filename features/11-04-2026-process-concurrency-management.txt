@@ -1,0 +1,579 @@
+================================================================================
+FEATURE PLAN: Gestión de Concurrencia y Procesos
+Fecha: 11 Abril 2026
+Estado: PENDIENTE DE APROBACIÓN
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+INFRAESTRUCTURA REAL DEL VPS (referencia para decisiones)
+────────────────────────────────────────────────────────────────────────────────
+
+  Hardware:     1 OCPU Ampere A1 (ARM64), 6 GB RAM, ~46 GB storage
+  OS:           Oracle Linux (dnf) — ARM architecture
+  Red:          Cloudflare como reverse proxy (solo rangos CF permitidos por NSG)
+                Acceso directo por IP bloqueado vía NSG rules
+  Python:       3.9 (ARM, instalado en VPS)
+  Proceso:      Gunicorn + Uvicorn workers, systemd service como usuario "opc"
+  /tmp:         Filesystem tmpfs en Oracle Linux → en RAM + swap
+                Con 6 GB RAM y videos de hasta 500 MB, hay que tener cuidado:
+                un video ensamblado + comprimido = hasta ~1 GB en /tmp a la vez
+
+  NOTA CRÍTICA — /tmp en Oracle Linux es tmpfs (RAM-backed):
+    → El espacio de /tmp compite con la RAM del proceso Python
+    → Con 1 video de 500 MB: ~500 MB assembled + ~200 MB compressed = ~700 MB en /tmp
+    → Con 6 GB RAM y Python usando ~200-300 MB base + Pillow ~50 MB pico,
+      queda margen suficiente para 1 video a la vez — NO para 2
+    → Esto refuerza la decisión de Semaphore(1): nunca procesar 2 videos a la vez
+    → Para evitar competir con la RAM: usar /home/opc/temp_optimus/ en disco (ver abajo)
+
+  NOTA — ARM64 y FFmpeg:
+    → FFmpeg disponible en Oracle Linux ARM via dnf (repositorio EPEL o RPM Fusion)
+    → Si no está en repos, descargar binario estático ARM64 de johnvansickle.com
+    → imageio-ffmpeg (pip) no incluye binario ARM64 → NO usar para prod en VPS
+
+
+────────────────────────────────────────────────────────────────────────────────
+CONTEXTO Y PROBLEMA ACTUAL
+────────────────────────────────────────────────────────────────────────────────
+
+El servidor corre actualmente con Gunicorn + 2 workers Uvicorn (procesos OS
+separados). No hay colas, no hay semaphores, no hay async real para código
+CPU-bound. El comportamiento actual:
+
+  - Imagen comprimida con Pillow: código síncrono y bloqueante
+  - FFmpeg para video (futuro): subprocess bloqueante
+  - Gunicorn despacha requests entre workers a nivel de OS
+
+ESCENARIOS PROBLEMÁTICOS:
+
+  [A] 2 requests de imagen simultáneos:
+    → Cada worker toma uno → funciona, 2 en paralelo OK
+    → La 3ra imagen espera en el socket queue de Gunicorn → correcto
+
+  [B] FFmpeg corriendo + requests de imagen llegando:
+    → FFmpeg consume ~70-80% del 1 OCPU disponible
+    → Pillow compite por la misma CPU → imágenes tardan 3-5x más
+    → El servidor no muere, pero la latencia se dispara
+
+  [C] Dos jobs de FFmpeg al mismo tiempo (sin control):
+    → Con 1 OCPU: ambos obtienen ~50% de CPU → tiempo total x2
+    → Chunks en /tmp: 2 videos grandes = 1-2 GB en RAM/disco simultáneos
+    → Riesgo real de OOM (Out of Memory) con workers separados
+
+  [D] Variable global compartida entre workers Gunicorn:
+    → Gunicorn multi-proceso NO comparte memoria entre workers
+    → Un asyncio.Semaphore o dict global en worker A es invisible para worker B
+    → Esto hace imposible coordinar jobs de FFmpeg entre workers sin
+      mecanismo externo (Redis, archivo de lock, socket, etc.)
+
+
+────────────────────────────────────────────────────────────────────────────────
+CÓMO FUNCIONA REALMENTE LA ARQUITECTURA (aclaración conceptual)
+────────────────────────────────────────────────────────────────────────────────
+
+ACLARACIÓN 1 — Los workers de Gunicorn NO son "uno para trabajo, otro para
+  gestión". Son procesos OS completamente independientes y equivalentes.
+  El balanceo entre ellos lo hace el kernel de Linux a nivel de socket:
+  el primero en estar libre toma el request. No hay coordinación entre ellos.
+  Ambos atienden imágenes, ambos podrían atender videos. El problema es que
+  al ser procesos separados, NO comparten memoria (no comparten colas, dicts,
+  semaphores ni ningún estado en RAM).
+
+ACLARACIÓN 2 — ¿Dónde viven las colas?
+  Con la arquitectura propuesta (1 solo proceso), las colas viven en la RAM
+  del proceso Python. No hay base de datos, no hay Redis, no hay archivo en
+  disco. Son objetos Python:
+    - asyncio.Queue         → cola de jobs de video (en RAM)
+    - ThreadPoolExecutor    → cola interna de tareas Pillow (en RAM)
+    - app.state.jobs dict   → estado de todos los jobs (en RAM)
+  Si el servidor se reinicia → las colas se pierden. Los videos en proceso
+  quedan en /tmp pero el dict de estado desaparece. Para este uso es aceptable.
+
+ACLARACIÓN 3 — ¿Cuántos "hilos" hay realmente con 1 worker?
+  Un proceso Python con asyncio tiene esta estructura de ejecución:
+
+    ┌─────────────────────────────────────────────────────────┐
+    │  Proceso Python (1 proceso OS, PID único)               │
+    │                                                         │
+    │  ┌─────────────────────────────────────────────────┐   │
+    │  │  Event Loop Thread (hilo principal asyncio)     │   │
+    │  │  - Recibe requests HTTP                         │   │
+    │  │  - Despacha routing de FastAPI                  │   │
+    │  │  - Gestiona colas, semaphores, dicts de estado  │   │
+    │  │  - Responde a polling de status en < 1ms        │   │
+    │  │  - NUNCA se bloquea (siempre disponible)        │   │
+    │  └─────────────────────────────────────────────────┘   │
+    │                                                         │
+    │  ┌──────────────────────┐  ┌──────────────────────┐   │
+    │  │  Thread Pool #1      │  │  Thread Pool #2      │   │
+    │  │  (CPU-bound work)    │  │  (CPU-bound work)    │   │
+    │  │  - Pillow compress   │  │  - Pillow compress   │   │
+    │  │  - FFmpeg subprocess │  │  (reserva)           │   │
+    │  └──────────────────────┘  └──────────────────────┘   │
+    └─────────────────────────────────────────────────────────┘
+
+  El event loop coordina todo y nunca hace trabajo CPU pesado. Cuando necesita
+  comprimir imagen o correr FFmpeg, le pasa la tarea a un thread del pool y
+  queda libre para seguir procesando otros requests mientras espera el resultado.
+
+ACLARACIÓN 4 — ¿Cómo entra al ThreadPoolExecutor el trabajo de imágenes?
+  El ThreadPoolExecutor tiene su propia cola interna (también en RAM).
+  Si max_workers=2 y ambos threads están ocupados, el 3er run_in_executor()
+  no falla: encola la tarea internamente y la corre cuando un thread se libera.
+  El event loop simplemente tiene un Future pendiente y sigue con otros requests.
+
+
+────────────────────────────────────────────────────────────────────────────────
+ESCENARIO CONCRETO: 4 imágenes + 2 videos en pocos segundos
+────────────────────────────────────────────────────────────────────────────────
+
+  t=0s   → Llegan 4 requests de imagen simultáneos (IMG-1, IMG-2, IMG-3, IMG-4)
+  t=0s   → Event loop los recibe a todos en < 1ms (es solo I/O)
+  t=0s   → IMG-1 → run_in_executor → Thread #1 empieza a comprimir con Pillow
+  t=0s   → IMG-2 → run_in_executor → Thread #2 empieza a comprimir con Pillow
+  t=0s   → IMG-3 → run_in_executor → No hay thread libre → espera en la cola
+             interna del ThreadPoolExecutor (en RAM, sin error, sin timeout)
+  t=0s   → IMG-4 → run_in_executor → Igual, se encola detrás de IMG-3
+  t=0s   → Event loop queda libre → puede recibir más requests
+
+  t=1s   → Llegan 2 requests de video (VID-1, VID-2) → POST /finalize
+  t=1s   → VID-1 → JobState(status="queued") → entra a asyncio.Queue
+  t=1s   → VID-2 → JobState(status="queued") → entra a asyncio.Queue detrás
+  t=1s   → Event loop responde inmediatamente a ambos con job_id + "queued"
+  t=1s   → video_worker coroutine toma VID-1 de la queue
+  t=1s   → VID-1 → intenta adquirir Semaphore(1) → lo adquiere → status="processing"
+  t=1s   → VID-1 → run_in_executor → Thread #1 (o #2, el que esté libre) → FFmpeg
+  t=1s   → VID-2 sigue en asyncio.Queue esperando (video_worker espera a VID-1)
+
+  t=2s   → IMG-1 termina → Thread #1 libre → IMG-3 sale de la cola interna → empieza
+  t=3s   → IMG-2 termina → Thread #2 libre → IMG-4 empieza
+  t=3s   → Los 4 clientes de imagen reciben respuesta
+
+  t=45s  → FFmpeg de VID-1 termina → Semaphore liberado → status="done"
+  t=45s  → video_worker toma VID-2 de la queue → adquiere Semaphore → empieza FFmpeg
+  t=90s  → FFmpeg de VID-2 termina → status="done"
+
+  Durante TODO este tiempo:
+    - Polling de GET /status/{job_id} responde en < 1ms (solo lee el dict en RAM)
+    - Nuevas imágenes que lleguen se encolan en ThreadPoolExecutor normalmente
+    - Health check GET /api/v1/status responde siempre
+    - El event loop NUNCA se bloqueó
+
+
+────────────────────────────────────────────────────────────────────────────────
+DECISIÓN DE ARQUITECTURA
+────────────────────────────────────────────────────────────────────────────────
+
+Opción elegida: 1 solo worker Uvicorn (async) + asyncio nativo
+
+JUSTIFICACIÓN:
+  - El VPS tiene 1 OCPU Ampere A1 → 2 workers sólo generan contención de CPU,
+    no throughput real adicional para cargas CPU-bound
+  - Con 1 worker: asyncio.Queue, Semaphore y dicts de estado son objetos Python
+    globales confiables (todo en el mismo proceso, misma RAM)
+  - Con run_in_executor: las tareas CPU-bound (Pillow, FFmpeg) no bloquean el
+    event loop → el servidor sigue respondiendo a otros requests durante compresión
+  - Sin Redis, sin archivos de lock, sin complejidad adicional
+  - Colas en RAM: suficiente para 3-4 solicitudes simultáneas; si el servidor
+    reinicia se pierden los jobs en proceso (aceptable para este caso de uso)
+
+Configuración de Gunicorn a cambiar:
+  ANTES: gunicorn -w 2 -k uvicorn.workers.UvicornWorker app.main:app
+  DESPUÉS: gunicorn -w 1 -k uvicorn.workers.UvicornWorker app.main:app
+           (o directamente: uvicorn app.main:app --workers 1)
+
+
+────────────────────────────────────────────────────────────────────────────────
+DISEÑO DE LA SOLUCIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+COMPONENTES NUEVOS:
+
+  1. ThreadPoolExecutor dedicado para CPU-bound
+     - Creado al inicio de la app (en lifespan)
+     - Compartido globalmente via app.state.executor
+     - Tamaño: max_workers=2 (1 para Pillow, 1 de reserva)
+     - loop.run_in_executor(executor, sync_fn, *args) para imágenes y FFmpeg
+
+  2. asyncio.Semaphore(1) para FFmpeg
+     - Garantiza que solo 1 proceso FFmpeg corra a la vez
+     - Compartido via app.state.ffmpeg_semaphore
+     - Job espera el semaphore → entra → procesa → libera
+
+  3. Cola de jobs de video (asyncio.Queue con maxsize=5)
+     - Los jobs de FFmpeg se encolan en /finalize
+     - Un worker coroutine (task en background) consume la cola
+     - Estado del job: "queued" mientras espera en la cola
+     - Transición: queued → processing → done/failed
+     - maxsize=5: si hay 5 jobs en cola, /finalize responde 503 (ver más abajo)
+
+  4. Contador de imágenes en vuelo (app.state.images_in_flight)
+     - Entero simple protegido por asyncio (single-threaded event loop)
+     - Incrementa justo antes de run_in_executor, decrementa al terminar
+     - Límite: max_images_in_flight = 6
+     - Si se supera el límite, /compress responde 503 (ver más abajo)
+
+  5. Registro de jobs en memoria (dict global via app.state)
+     - jobs: { job_id: JobState }
+     - JobState: status, progress_pct, input_size, output_size, reduction_pct,
+                 created_at, updated_at, file_path, error_msg
+     - Accesible desde cualquier endpoint sin base de datos
+
+
+────────────────────────────────────────────────────────────────────────────────
+MÁQUINA DE ESTADOS DEL JOB DE VIDEO
+────────────────────────────────────────────────────────────────────────────────
+
+  uploading  → (finalize recibido, job encolado) → queued
+  queued     → (worker de cola lo toma, semaphore adquirido) → processing
+  processing → (FFmpeg termina OK) → done
+  processing → (FFmpeg falla o timeout) → failed
+  uploading  → (inactividad > 15 min sin finalizar) → expired
+  done       → (2h sin descarga o tras descarga) → [borrado de disco + memoria]
+  failed     → (inmediato tras error) → [borrado de disco, estado persiste 1h]
+
+
+────────────────────────────────────────────────────────────────────────────────
+FLUJO ASYNC PARA IMÁGENES (endpoint actual /media/compress)
+────────────────────────────────────────────────────────────────────────────────
+
+  ANTES (síncrono bloqueante):
+    result = compress_image(data, ext, out, size, lossy_png)
+
+  DESPUÉS (no bloqueante):
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        request.app.state.executor,
+        compress_image, data, ext, out, size, lossy_png
+    )
+
+  Efecto: mientras Pillow comprime, el event loop puede atender otros requests
+  (incluyendo polling de status de video, health checks, etc.)
+
+
+────────────────────────────────────────────────────────────────────────────────
+FLUJO ASYNC PARA JOBS DE VIDEO
+────────────────────────────────────────────────────────────────────────────────
+
+  POST /finalize:
+    → Crear JobState(status="queued")
+    → Poner job_id en app.state.video_queue
+    → Responder inmediatamente con { job_id, status: "queued" }
+
+  Worker coroutine (corre como asyncio.Task desde el lifespan):
+    async def video_worker(app):
+        while True:
+            job_id = await app.state.video_queue.get()
+            async with app.state.ffmpeg_semaphore:
+                app.state.jobs[job_id].status = "processing"
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    app.state.executor,
+                    run_ffmpeg, job_id, input_path, output_path
+                )
+                # actualizar estado según resultado de FFmpeg
+            app.state.video_queue.task_done()
+
+  GET /status/{job_id}:
+    → Lee app.state.jobs[job_id] → responde JSON con estado actual
+    → Respuesta en < 1ms (solo lectura de dict en memoria)
+
+
+────────────────────────────────────────────────────────────────────────────────
+COMPORTAMIENTO CUANDO LA COLA ESTÁ LLENA (servidor saturado)
+────────────────────────────────────────────────────────────────────────────────
+
+IMÁGENES — Cola del ThreadPoolExecutor:
+  El ThreadPoolExecutor no tiene límite de cola por defecto. Se controla con
+  el contador app.state.images_in_flight antes de encolar.
+
+  Lógica en POST /compress:
+    if app.state.images_in_flight >= MAX_IMAGES_IN_FLIGHT (6):
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "server_busy",
+                "message": "Server is busy processing too many images. Please retry in a few seconds.",
+                "retry_after_seconds": 5
+            }
+        )
+    app.state.images_in_flight += 1
+    try:
+        result = await loop.run_in_executor(executor, compress_image, ...)
+    finally:
+        app.state.images_in_flight -= 1  # siempre decrementa, incluso si falla
+
+VIDEOS — asyncio.Queue con maxsize=5:
+  asyncio.Queue(maxsize=5) hace que queue.put_nowait() lance QueueFull si está llena.
+  Se captura en /finalize:
+
+    try:
+        app.state.video_queue.put_nowait(job_id)
+    except asyncio.QueueFull:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "server_busy",
+                "message": "Video compression queue is full. Please retry in a few minutes.",
+                "queue_size": app.state.video_queue.qsize(),
+                "retry_after_seconds": 60
+            }
+        )
+
+RESPUESTA 503 — Lo que el frontend debe manejar:
+  HTTP 503 Service Unavailable con body JSON:
+  {
+    "error": "server_busy",
+    "message": "...",
+    "retry_after_seconds": N   ← el frontend usa esto para mostrar un timer
+  }
+  Además se incluye el header estándar: Retry-After: N
+
+  En Next.js el manejo sería:
+    if (res.status === 503) {
+      const { retry_after_seconds } = await res.json();
+      // show message: "Server busy, retrying in N seconds..."
+      await sleep(retry_after_seconds * 1000);
+      // reintentar el request
+    }
+
+
+────────────────────────────────────────────────────────────────────────────────
+ALMACENAMIENTO EN DISCO: IMÁGENES VS VIDEOS
+────────────────────────────────────────────────────────────────────────────────
+
+IMÁGENES — 100% en memoria, NUNCA tocan el disco:
+  La función compress_image() trabaja exclusivamente con BytesIO (en RAM):
+    img = Image.open(BytesIO(data))   ← lee de RAM
+    buf = BytesIO()
+    img.save(buf, ...)                ← escribe a RAM
+    return buf, ext                   ← devuelve RAM al endpoint
+
+  El endpoint devuelve Response(content=buf.getvalue(), ...) → también en RAM.
+  Una imagen de 10MB durante compresión ocupa ~30-40MB de RAM máximo (RGBA descomprimido).
+  Al terminar el request, Python libera esa RAM automáticamente.
+  → NO hay nada que limpiar en disco para imágenes. ✓
+
+VIDEOS — SÍ se guardan en disco, proceso en múltiples pasos:
+  /home/opc/temp_optimus/
+    {upload_id}/
+      chunks/          ← partes del upload (escritas durante el chunked upload)
+        0.part, 1.part, 2.part ...
+      assembled/
+        video.mp4      ← ensamblado por /finalize (lectura de chunks + escritura)
+      compressed/
+        video.mp4      ← resultado de FFmpeg (el archivo que se descarga)
+
+  Momentos de escritura y liberación esperada:
+    - Chunks escritos durante upload → liberados al ensamblar (se borran los .part)
+    - assembled/video.mp4 → liberado cuando FFmpeg termina (se puede borrar)
+    - compressed/video.mp4 → liberado después de que el cliente lo descarga
+
+  PROBLEMA: si el cliente descarga y luego nunca vuelve a pedir, el archivo
+  queda en disco indefinidamente. Si el servidor se reinicia, los jobs en
+  app.state.jobs desaparecen pero los archivos en /tmp quedan como huérfanos.
+
+ESTRATEGIA DE LIMPIEZA PARA VIDEOS:
+  Se implementan 3 mecanismos de limpieza:
+
+  [1] Limpieza al completar descarga:
+    → Cuando GET /download/{job_id} se sirve exitosamente:
+       - Borrar compressed/video.mp4
+       - Borrar assembled/video.mp4 (si aún existe)
+       - Borrar carpeta {upload_id}/ completa
+       - Mantener JobState en memoria 30 min más (para que el cliente no reciba 404)
+       - Marcar JobState.file_deleted = True (evitar re-descarga)
+
+  [2] Limpieza periódica por tiempo (cleanup_jobs task en background):
+    → Corre cada 5 minutos como asyncio.Task
+    → Reglas de expiración:
+       - Upload en estado "uploading" sin actividad > 15 min → borrar carpeta + JobState
+       - Job en "queued" o "processing" sin actualización > 30 min → marcar "failed" + borrar
+       - Job en "done" con archivo en disco > 2 horas → borrar archivos (JobState persiste)
+       - Job en "done" sin archivo (ya descargado) > 30 min → borrar JobState de memoria
+       - Job en "failed" > 1 hora → borrar JobState de memoria
+
+  [3] Limpieza al arrancar (startup scan):
+    → En lifespan, al iniciar la app, escanear /home/opc/temp_optimus/
+    → Borrar cualquier carpeta que exista (son restos de una sesión anterior)
+    → Esto cubre el caso de "el servidor se reinició con jobs en proceso"
+    → Log de cuántas carpetas huérfanas se limpiaron
+
+  IMPLEMENTACIÓN — cleanup_jobs():
+    async def cleanup_jobs(app):
+        while True:
+            await asyncio.sleep(300)  # cada 5 minutos
+            now = datetime.utcnow()
+            to_delete = []
+            for job_id, job in app.state.jobs.items():
+                if job.status == "uploading" and (now - job.updated_at).seconds > 900:
+                    delete_upload_folder(job_id)
+                    to_delete.append(job_id)
+                elif job.status == "done" and not job.file_deleted:
+                    if (now - job.updated_at).seconds > 7200:
+                        delete_upload_folder(job_id)
+                        job.file_deleted = True
+                elif job.status in ("done", "failed") and job.file_deleted:
+                    if (now - job.updated_at).seconds > 1800:
+                        to_delete.append(job_id)
+            for job_id in to_delete:
+                del app.state.jobs[job_id]
+
+
+────────────────────────────────────────────────────────────────────────────────
+RESUMEN DE LÍMITES Y COMPORTAMIENTOS DEFINIDOS
+────────────────────────────────────────────────────────────────────────────────
+
+  Imágenes simultáneas máximo:    6 en cola (503 si se supera)
+  Workers de imagen (threads):    2 procesando a la vez; las demás esperan en cola
+  Imágenes tocan disco:           NO — 100% en RAM
+  Limpieza de imágenes:           No aplica (RAM se libera automáticamente)
+
+  Videos en cola máximo:          5 (503 si se supera)
+  FFmpeg simultáneo máximo:       1 (Semaphore(1))
+  Videos tocan disco:             SÍ — chunks + assembled + compressed en /tmp
+  Limpieza de videos:             3 mecanismos: post-descarga + periódica + startup
+
+
+────────────────────────────────────────────────────────────────────────────────
+ARCHIVOS A CREAR / MODIFICAR
+────────────────────────────────────────────────────────────────────────────────
+
+MODIFICADOS:
+
+  app/main.py
+    - Agregar lifespan con:
+        executor = ThreadPoolExecutor(max_workers=2)
+        ffmpeg_semaphore = asyncio.Semaphore(1)
+        video_queue = asyncio.Queue()
+        jobs = {}  # dict global de JobState
+        video_worker_task = asyncio.create_task(video_worker(app))
+    - Asignar todo a app.state.*
+    - Al shutdown: cancelar video_worker_task, shutdown executor
+
+  app/api/v1/media/router.py (imagen)
+    - Cambiar compress_image() a await loop.run_in_executor(...)
+    - Pasar request como parámetro para acceder a request.app.state.executor
+
+  scripts/linux/start.sh (y optimus-api.service)
+    - Cambiar -w 2 a -w 1 en el comando de Gunicorn
+
+NUEVOS:
+
+  app/services/job_manager.py
+    - Clase JobState: dataclass con todos los campos de estado
+    - Funciones helper: get_job(), update_job(), delete_job()
+    - cleanup_jobs(): borra jobs expirados del dict (llamado periódicamente)
+
+  (El video_worker se puede poner en job_manager.py o en video_compressor.py)
+
+
+────────────────────────────────────────────────────────────────────────────────
+ENDPOINT DE SALUD (NUEVO)
+────────────────────────────────────────────────────────────────────────────────
+
+  GET /api/v1/status
+    Respuesta:
+    {
+      "status": "ok",
+      "images_in_flight": 0,
+      "video_jobs_queued": 1,
+      "video_jobs_processing": 0,
+      "video_jobs_total": 3,
+      "worker": "single-async"
+    }
+
+  Útil para monitoreo y para que el frontend sepa si el servidor está saturado.
+
+
+────────────────────────────────────────────────────────────────────────────────
+ORDEN DE IMPLEMENTACIÓN SUGERIDO
+────────────────────────────────────────────────────────────────────────────────
+
+  1. app/services/job_manager.py — JobState + helpers
+  2. app/main.py — lifespan con executor, semaphore, queue, worker task
+  3. app/api/v1/media/router.py — run_in_executor para imágenes
+  4. scripts/linux/start.sh + optimus-api.service — bajar a -w 1
+  5. GET /api/v1/status — endpoint de salud
+  6. (Luego) Integrar video_worker con video_compressor cuando ese plan avance
+
+
+────────────────────────────────────────────────────────────────────────────────
+IMPACTO EN RENDIMIENTO ESPERADO
+────────────────────────────────────────────────────────────────────────────────
+
+  IMÁGENES:
+    - Antes: 2 en paralelo (bloqueante por worker), 3ra espera
+    - Después: N en paralelo con run_in_executor (limitado por CPU real)
+    - En práctica: el ThreadPoolExecutor con max_workers=2 da el mismo
+      paralelismo pero sin bloquear el event loop para el resto de endpoints
+
+  VIDEO:
+    - Antes: sin control → 2 FFmpeg simultáneos posibles → OOM
+    - Después: máx 1 FFmpeg a la vez, los demás en cola → seguro y predecible
+
+  HEALTH / STATUS:
+    - Antes: un polling de status bloquea si el worker está ocupado
+    - Después: polling responde < 1ms siempre (lectura de dict en memoria)
+
+
+────────────────────────────────────────────────────────────────────────────────
+REVISIÓN DE REQUIREMENTS Y COMPATIBILIDAD CON EL VPS
+────────────────────────────────────────────────────────────────────────────────
+
+ESTADO ACTUAL de requirements.txt:
+  fastapi[standard]>=0.115.0
+  pydantic-settings>=2.7.0
+  pillow>=10.0.0
+  python-multipart>=0.0.9
+  gunicorn>=23.0.0
+
+CAMBIOS NECESARIOS en requirements.txt para este plan:
+  → NINGUNO. Todos los módulos usados son de la stdlib de Python:
+       asyncio          — stdlib (Python 3.4+)
+       concurrent.futures (ThreadPoolExecutor) — stdlib (Python 3.2+)
+       uuid             — stdlib
+       datetime         — stdlib
+       shutil           — stdlib (para borrar carpetas recursivamente)
+       os / pathlib     — stdlib
+
+  → uvicorn ya viene incluido como dependencia transitiva de fastapi[standard]
+  → gunicorn ya está en requirements.txt
+
+COMPATIBILIDAD CON PYTHON 3.9 (VPS):
+  → asyncio.Queue, asyncio.Semaphore, asyncio.create_task: disponibles desde 3.4 ✓
+  → ThreadPoolExecutor: disponible desde 3.2 ✓
+  → asyncio.Queue(maxsize=N): disponible desde 3.4 ✓
+  → dataclasses: disponible desde 3.7 ✓
+  → ADVERTENCIA: asyncio.get_event_loop() está deprecado en Python 3.10+
+    pero en 3.9 sigue siendo la forma correcta → sin problema en el VPS
+
+  NOTA: cuando se implemente la feature de video, tampoco se necesitarán
+  paquetes pip adicionales para FFmpeg. FFmpeg se instala en el sistema vía:
+    sudo dnf install -y epel-release && sudo dnf install -y ffmpeg
+  (o binario estático ARM64 si no está en repos)
+
+VERIFICACIÓN RECOMENDADA EN EL VPS ANTES DE IMPLEMENTAR:
+  python3 --version          # verificar que es 3.9.x
+  python3 -c "import asyncio, concurrent.futures, uuid, shutil; print('OK')"
+  df -h /home/opc/temp_optimus  # verificar espacio disponible en disco
+  free -h                        # verificar RAM libre
+
+  DIRECTORIO DE TRABAJO EN DISCO (no tmpfs):
+    Ruta:   /home/opc/temp_optimus/
+    Ventaja: usa los ~46 GB de disco del VPS en lugar de RAM
+    El proceso Python (usuario opc) tiene permisos completos sobre su propio home
+    Se crea automáticamente en el startup del lifespan:
+      os.makedirs("/home/opc/temp_optimus", exist_ok=True)
+
+
+────────────────────────────────────────────────────────────────────────────────
+PREGUNTAS ABIERTAS
+────────────────────────────────────────────────────────────────────────────────
+
+  1. ¿Se quiere un endpoint GET /api/v1/status público o protegido por X-API-Key?
+  2. ¿Cuántos jobs de video en cola máximo antes de rechazar nuevos? (sugerido: 5)
+  3. ¿El ThreadPoolExecutor con max_workers=2 es suficiente o se prefiere 1?
+
+================================================================================

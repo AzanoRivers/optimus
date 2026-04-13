@@ -1,0 +1,222 @@
+================================================================================
+FEATURE PLAN: Video Compression — Chunked Upload + Async Processing
+Fecha: 11 Abril 2026
+Estado: PENDIENTE DE APROBACIÓN
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+CONTEXTO Y DECISIONES DE DISEÑO
+────────────────────────────────────────────────────────────────────────────────
+
+Restricciones del entorno:
+  - Cloudflare Free: límite de 100 MB por request → no se puede subir video entero
+  - Cloudflare timeout: 120s → compresión de video tarda minutos → no sincrónico
+  - VPS: 1 OCPU Ampere A1, 6 GB RAM, 46 GB storage
+  - No se apunta ningún subdominio directo al VPS (seguridad)
+
+Solución elegida: Chunked Upload + Job Queue asíncrono
+  - El cliente divide el video en partes de máx 90 MB
+  - Cada parte se sube en un request separado (< 100 MB → pasa Cloudflare)
+  - Cuando el servidor recibe todos los chunks, ensambla el video y lanza FFmpeg
+  - El cliente hace polling para saber el estado del job
+  - Cleanup automático por inactividad (chunks huérfanos o jobs abandonados)
+
+
+────────────────────────────────────────────────────────────────────────────────
+FLUJO COMPLETO DEL CLIENTE
+────────────────────────────────────────────────────────────────────────────────
+
+1. POST /api/v1/media/videos/upload/init
+   → El cliente informa: nombre del archivo, tamaño total, total de chunks
+   → Servidor responde: upload_id (UUID), chunk_size recomendado
+   → Estado inicial: "uploading"
+
+2. POST /api/v1/media/videos/upload/chunk
+   → Form-data: upload_id, chunk_index (0-based), chunk (file part)
+   → Se repite por cada chunk en orden (o en paralelo si el cliente lo maneja)
+   → Servidor responde: chunks recibidos hasta ahora / total esperado
+   → Cada chunk recibido reinicia el timer de inactividad
+
+3. POST /api/v1/media/videos/upload/finalize
+   → El cliente indica que ya subió todos los chunks
+   → Servidor verifica que tiene todos → ensambla el video completo
+   → Lanza FFmpeg en un thread de background
+   → Responde: job_id, status="processing"
+
+4. GET /api/v1/media/videos/status/{job_id}
+   → Cliente hace polling cada 5-10 segundos
+   → Respuesta: { status, progress_pct, input_size, output_size, reduction_pct }
+   → Estados: "uploading" | "processing" | "done" | "failed" | "expired"
+
+5. GET /api/v1/media/videos/download/{job_id}
+   → Disponible solo cuando status="done"
+   → StreamingResponse con el video comprimido
+   → Después de la descarga (o tras N horas), el archivo se borra automáticamente
+
+
+────────────────────────────────────────────────────────────────────────────────
+ARCHIVOS A CREAR / MODIFICAR
+────────────────────────────────────────────────────────────────────────────────
+
+NUEVOS:
+  app/services/upload_manager.py
+    - Clase UploadSession: gestiona estado de un upload en curso
+    - Clase UploadManager: registro de todas las sesiones activas (en memoria)
+    - receive_chunk(): guarda chunk en disco en carpeta temporal
+    - assemble(): concatena chunks en archivo final
+    - cleanup_expired(): borra sesiones inactivas (llamado periódicamente)
+    - Sesión expira si no recibe chunk en 15 minutos sin finalizar
+    - Job expira 2 horas después de completarse (sin importar si se descargó)
+
+  app/services/video_compressor.py
+    - compress_video_file(input_path, output_path): llama a FFmpeg subprocess
+    - Mismo codec que el CLI local: libx264, CRF 23, preset medium, aac
+    - FFmpeg debe estar instalado en el VPS (via dnf: ffmpeg o ffmpeg-free)
+    - Captura progreso de FFmpeg parseando stderr para calcular progress_pct
+
+  app/api/v1/media/video_router.py (nuevo router separado)
+    - POST /upload/init
+    - POST /upload/chunk
+    - POST /upload/finalize
+    - GET  /status/{job_id}
+    - GET  /download/{job_id}
+
+MODIFICADOS:
+  app/api/v1/media/router.py
+    - Eliminar el stub 501 de /videos/compress
+    - Incluir el nuevo video_router
+
+  app/api/v1/media/__init__.py
+    - Sin cambios esperados
+
+  app/main.py
+    - Agregar lifespan: iniciar thread de cleanup periódico (cada 5 min)
+
+  requirements.txt
+    - Sin cambios (FFmpeg se instala en el sistema, no via pip)
+    - NOTA: verificar si imageio-ffmpeg está disponible en ARM como alternativa
+
+  app/guide.py
+    - Agregar sección de video con el flujo completo (EN + ES)
+
+
+────────────────────────────────────────────────────────────────────────────────
+ESTRUCTURA DE ALMACENAMIENTO TEMPORAL EN VPS
+────────────────────────────────────────────────────────────────────────────────
+
+/tmp/optimus_uploads/
+  {upload_id}/
+    chunks/
+      0.part
+      1.part
+      2.part
+      ...
+    assembled/
+      video_original.mp4       ← ensamblado después de finalize
+    compressed/
+      video_compressed.mp4     ← resultado de FFmpeg
+
+Cleanup automático:
+  - Si upload inactivo > 15 min sin finalizar → borrar carpeta completa
+  - Si job completado > 2 horas → borrar carpeta completa
+  - Si job fallado → borrar inmediatamente después de actualizar estado
+  - Thread de cleanup corre cada 5 minutos
+
+
+────────────────────────────────────────────────────────────────────────────────
+ESTADO DEL JOB (máquina de estados)
+────────────────────────────────────────────────────────────────────────────────
+
+  uploading  → (todos los chunks recibidos + finalize) → processing
+  processing → (FFmpeg termina OK) → done
+  processing → (FFmpeg falla) → failed
+  uploading  → (inactividad > 15 min) → expired
+  done       → (2 horas sin descarga o tras descarga exitosa) → [borrado]
+
+
+────────────────────────────────────────────────────────────────────────────────
+LÍMITES Y VALIDACIONES
+────────────────────────────────────────────────────────────────────────────────
+
+  - Tamaño máximo de video: 500 MB (rechazado en /init si total_size > 500 MB)
+  - Tamaño máximo por chunk: 90 MB (deja margen bajo el límite de 100 MB de Cloudflare)
+  - Máximo chunks en vuelo: 10 (evita abusos)
+  - Formatos soportados: mp4, mov, avi, mkv
+  - Máximo 1 job activo por API key simultáneamente (evita saturar el VPS)
+  - El upload_id se valida en cada chunk para evitar inyecciones de path
+
+
+────────────────────────────────────────────────────────────────────────────────
+INSTALACIÓN DE FFMPEG EN EL VPS (paso previo al deploy)
+────────────────────────────────────────────────────────────────────────────────
+
+  # Oracle Linux (dnf) — solo una vez en el VPS:
+  sudo dnf install -y epel-release
+  sudo dnf install -y ffmpeg
+
+  # Verificar:
+  ffmpeg -version
+
+  Si ffmpeg no está disponible en los repos de Oracle Linux ARM:
+  → Alternativa: descargar binario estático de https://johnvansickle.com/ffmpeg/
+  → O usar imageio-ffmpeg (pip) que bundlea el binario automáticamente
+
+
+────────────────────────────────────────────────────────────────────────────────
+EJEMPLO DE INTEGRACIÓN DESDE NEXT.JS
+────────────────────────────────────────────────────────────────────────────────
+
+  const CHUNK_SIZE = 80 * 1024 * 1024; // 80 MB
+
+  // 1. Init
+  const { upload_id } = await fetch('/api/v1/media/videos/upload/init', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+    body: JSON.stringify({ filename: file.name, total_size: file.size,
+                           total_chunks: Math.ceil(file.size / CHUNK_SIZE) })
+  }).then(r => r.json());
+
+  // 2. Chunks
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    const form = new FormData();
+    form.append('upload_id', upload_id);
+    form.append('chunk_index', String(i));
+    form.append('chunk', chunk);
+    await fetch('/api/v1/media/videos/upload/chunk', {
+      method: 'POST', headers: { 'X-API-Key': key }, body: form
+    });
+  }
+
+  // 3. Finalize
+  const { job_id } = await fetch('/api/v1/media/videos/upload/finalize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
+    body: JSON.stringify({ upload_id })
+  }).then(r => r.json());
+
+  // 4. Polling
+  let status;
+  do {
+    await new Promise(r => setTimeout(r, 5000));
+    status = await fetch(`/api/v1/media/videos/status/${job_id}`,
+      { headers: { 'X-API-Key': key } }).then(r => r.json());
+  } while (status.status === 'processing');
+
+  // 5. Descarga
+  if (status.status === 'done') {
+    window.location = `/api/v1/media/videos/download/${job_id}`;
+  }
+
+
+────────────────────────────────────────────────────────────────────────────────
+PREGUNTAS ABIERTAS ANTES DE IMPLEMENTAR
+────────────────────────────────────────────────────────────────────────────────
+
+  1. ¿FFmpeg ya está instalado en el VPS o hay que instalarlo?
+  2. ¿Se necesita progress_pct en tiempo real o solo "processing/done/failed"?
+  3. ¿La URL de descarga debe ser temporal (expirar) o está protegida por X-API-Key?
+  4. ¿Un job activo por API key es suficiente o se permiten varios en paralelo?
+
+================================================================================

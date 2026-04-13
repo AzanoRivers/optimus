@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import zipfile
@@ -14,6 +15,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -46,7 +48,8 @@ router = APIRouter(
 
 
 @router.post("/images/compress")
-def compress_images(
+async def compress_images(
+    request: Request,
     files: Annotated[List[UploadFile], File()],
     out: Annotated[Optional[str], Form()] = None,
     size: Annotated[Optional[int], Form()] = None,
@@ -63,6 +66,19 @@ def compress_images(
     out = out if out is not None else out_q
     size = size if size is not None else size_q
     lossy_png = bool(lossy if lossy is not None else lossy_q)
+
+    # ── Check server capacity before accepting work ───────────────────────────
+    state = request.app.state
+    if state.images_in_flight >= state.max_images_in_flight:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "server_busy",
+                "message": "Server is busy processing too many images. Please retry in a few seconds.",
+                "retry_after_seconds": 5,
+            },
+            headers={"Retry-After": "5"},
+        )
 
     # ── Validate params ──────────────────────────────────────────────────────
     if not files:
@@ -125,21 +141,34 @@ def compress_images(
 
         file_data.append((f.filename or f"image_{len(file_data)}.{ext}", data, ext))
 
-    # ── Process images sequentially with timeout ─────────────────────────────
+    # ── Process images via thread pool (non-blocking event loop) ─────────────
     total = len(file_data)
     start = time.time()
     results: list[tuple[str, bytes]] = []  # (output_filename, compressed_bytes)
 
-    for original_name, data, original_ext in file_data:
-        try:
-            buf, out_ext = compress_image(data, original_ext, out, size, lossy_png)
-            stem = Path(original_name).stem
-            results.append((f"{stem}.{out_ext}", buf.read()))
-        except Exception as exc:
-            logger.exception("Failed to compress '%s': %s", original_name, exc)
+    loop = asyncio.get_event_loop()
+    state.images_in_flight += len(file_data)
+    try:
+        for original_name, data, original_ext in file_data:
+            try:
+                buf, out_ext = await loop.run_in_executor(
+                    state.executor,
+                    compress_image,
+                    data,
+                    original_ext,
+                    out,
+                    size,
+                    lossy_png,
+                )
+                stem = Path(original_name).stem
+                results.append((f"{stem}.{out_ext}", buf.read()))
+            except Exception as exc:
+                logger.exception("Failed to compress '%s': %s", original_name, exc)
 
-        if time.time() - start >= _TIMEOUT_SECONDS:
-            break
+            if time.time() - start >= _TIMEOUT_SECONDS:
+                break
+    finally:
+        state.images_in_flight -= len(file_data)
 
     processed = len(results)
 

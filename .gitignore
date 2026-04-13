@@ -328,3 +328,7 @@ build.log
 *.mono/
 **/*.translation
 **/*.mono/
+
+# VPS INFO
+vps_oracle_cloud_context.md
+**/*vps_oracle_cloud_context.md

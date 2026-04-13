@@ -7,7 +7,7 @@ User=opc
 WorkingDirectory=/home/opc/projects/optimus
 EnvironmentFile=-/home/opc/projects/optimus/.env
 ExecStart=/home/opc/projects/optimus/.venv/bin/gunicorn app.main:app \
-    -w 2 -k uvicorn.workers.UvicornWorker \
+    -w 1 -k uvicorn.workers.UvicornWorker \
     --bind 127.0.0.1:8000
 Restart=always
 RestartSec=3
