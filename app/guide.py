@@ -118,8 +118,9 @@ _GUIDE_HTML = """<!DOCTYPE html>
       font-size: 0.75rem; font-weight: 700; margin-right: 0.25rem;
       font-family: monospace; white-space: nowrap;
     }
-    .get  { background: #0e4429; color: #3fb950; }
-    .post { background: #1f2d5a; color: #79c0ff; }
+    .get    { background: #0e4429; color: #3fb950; }
+    .post   { background: #1f2d5a; color: #79c0ff; }
+    .delete { background: #4a1010; color: #ff7b72; }
     .path { font-family: monospace; font-size: 0.85rem; color: #f0f6fc; word-break: break-all; }
     .auth-badge {
       margin-left: auto; font-size: 0.72rem; padding: 0.15rem 0.5rem;
@@ -296,6 +297,14 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <span class="auth-badge required">X-API-Key required</span>
         </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">Download the compressed video. Only available when <code>status: done</code>. File is deleted from the server once the transfer completes.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method delete">DELETE</span>
+          <span class="path">/api/v1/media/videos/upload/{upload_id}</span>
+          <span class="auth-badge required">X-API-Key required</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Cancel and clean up a job at any stage (uploading, queued, processing, done). Kills FFmpeg if running, deletes all temporary files. Returns <code>{cancelled: true, job_id}</code>. Returns <code>404</code> if already gone.</p>
       </div>
     </section>
 
@@ -647,6 +656,14 @@ async function compressVideo(file) {
           <span class="auth-badge required">X-API-Key requerido</span>
         </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">Descarga el video comprimido. Solo disponible cuando <code>status: done</code>. El archivo se elimina del servidor al terminar la transferencia.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method delete">DELETE</span>
+          <span class="path">/api/v1/media/videos/upload/{upload_id}</span>
+          <span class="auth-badge required">X-API-Key requerido</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Cancela y limpia un job en cualquier estado (subiendo, en cola, comprimiendo, listo). Mata FFmpeg si est&aacute; corriendo y elimina todos los archivos temporales. Devuelve <code>{cancelled: true, job_id}</code>. Devuelve <code>404</code> si ya no existe.</p>
       </div>
     </section>
 
