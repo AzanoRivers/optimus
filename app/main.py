@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from app.api.v1.router import router as v1_router
 from app.core.config import settings
 from app.guide import get_guide
+from app.guide_ai import get_guide_ai
 from app.services.job_manager import Dict, JobState, cleanup_jobs_loop, purge_temp_root
 from app.services.video_compressor import video_worker
 
@@ -89,3 +90,8 @@ async def root() -> dict:
 @app.get("/guide", tags=["guide"], include_in_schema=False)
 def guide():
     return get_guide()
+
+
+@app.get("/guide-ai", tags=["guide"], include_in_schema=False)
+def guide_ai():
+    return get_guide_ai()

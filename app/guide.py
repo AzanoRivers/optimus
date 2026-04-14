@@ -228,7 +228,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
       <p>All endpoints under <code>/api/v1/</code> require an API key in the request header:</p>
       <pre><code>X-API-Key: your-secret-key</code></pre>
       <p>Requests without a valid key return <code>401 Unauthorized</code>.</p>
-      <p>The <code>GET /guide</code> endpoint is public &middot; no key required.</p>
+      <p>The <code>GET /guide</code> and <code>GET /guide-ai</code> endpoints are public &middot; no key required.</p>
     </section>
 
     <section id="en-endpoints">
@@ -240,6 +240,14 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <span class="auth-badge">public</span>
         </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">This page. HTML API reference guide.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="path">/guide-ai</span>
+          <span class="auth-badge">public</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Machine-readable JSON reference optimized for AI agents (LLMs, LangChain, MCP, etc.). Same content as this guide but structured for programmatic consumption &mdash; no HTML parsing required.</p>
       </div>
       <div class="endpoint">
         <div class="endpoint-header">
@@ -416,6 +424,46 @@ _GUIDE_HTML = """<!DOCTYPE html>
         <li>Compressed file kept for <strong>30 minutes</strong> after completion, or deleted immediately after a successful download</li>
       </ul>
 
+      <h3>Endpoint parameters</h3>
+
+      <h4>POST /upload/init &mdash; JSON body</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>filename</code></td><td>string</td><td>Yes</td><td>Original file name including extension. Allowed: <code>.mp4</code> <code>.mov</code> <code>.avi</code> <code>.mkv</code></td></tr>
+          <tr><td><code>total_size</code></td><td>integer</td><td>Yes</td><td>Total video size in <strong>bytes</strong>. Max 500 MB (524,288,000 bytes). Must be &gt; 0.</td></tr>
+          <tr><td><code>total_chunks</code></td><td>integer</td><td>Yes</td><td>Number of chunks the video will be split into. Between 1 and 10.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Response: <code>{ upload_id, chunk_size_recommended }</code></p>
+
+      <h4>POST /upload/chunk &mdash; multipart/form-data</h4>
+      <div class="note">Do <strong>not</strong> set <code>Content-Type: application/json</code> for this endpoint — the browser/fetch sets it automatically as <code>multipart/form-data</code> when you pass a <code>FormData</code> object.</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>upload_id</code></td><td>string (form)</td><td>Yes</td><td>The UUID returned by <code>/init</code></td></tr>
+          <tr><td><code>chunk_index</code></td><td>integer (form)</td><td>Yes</td><td>0-based index of this chunk. Must be sent in order: 0, 1, 2&hellip;</td></tr>
+          <tr><td><code>chunk</code></td><td>file (form)</td><td>Yes</td><td>Binary slice of the video. Max 90 MB per chunk.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Response: <code>{ received, total }</code></p>
+
+      <h4>POST /upload/finalize &mdash; JSON body</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>upload_id</code></td><td>string</td><td>Yes</td><td>The same UUID used during chunk upload</td></tr>
+        </tbody>
+      </table></div>
+      <p>Response: <code>{ job_id, status: "queued" }</code></p>
+
+      <h4>GET /status/{job_id} &mdash; no body</h4>
+      <p>Pass <code>X-API-Key</code> header only. Returns the full job state object (see <em>Status response</em> below).</p>
+
+      <h4>GET /download/{job_id} &mdash; no body</h4>
+      <p>Pass <code>X-API-Key</code> header only. Available only when <code>status === "done"</code>. Returns the compressed <code>video/mp4</code> file. The file is deleted from the server after transfer &mdash; do <strong>not</strong> use <code>window.location.href</code> (cannot send headers). Use <code>fetch</code> + blob instead (see JS example).</p>
+
       <h3>Job states</h3>
       <div class="table-wrap"><table>
         <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
@@ -531,7 +579,7 @@ async function compressVideo(file) {
       <p>Todos los endpoints bajo <code>/api/v1/</code> requieren una API key en el header de la petici&oacute;n:</p>
       <pre><code>X-API-Key: tu-clave-secreta</code></pre>
       <p>Las peticiones sin clave v&aacute;lida devuelven <code>401 Unauthorized</code>.</p>
-      <p>El endpoint <code>GET /guide</code> es p&uacute;blico &middot; no requiere clave.</p>
+      <p>Los endpoints <code>GET /guide</code> y <code>GET /guide-ai</code> son p&uacute;blicos &middot; no requieren clave.</p>
     </section>
 
     <section id="es-endpoints">
@@ -543,6 +591,14 @@ async function compressVideo(file) {
           <span class="auth-badge">p&uacute;blico</span>
         </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">Esta p&aacute;gina. Referencia de la API en HTML.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="path">/guide-ai</span>
+          <span class="auth-badge">p&uacute;blico</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Referencia JSON optimizada para agentes de IA (LLMs, LangChain, MCP, etc.). Mismo contenido que esta gu&iacute;a pero estructurado para consumo program&aacute;tico &mdash; sin necesidad de parsear HTML.</p>
       </div>
       <div class="endpoint">
         <div class="endpoint-header">
@@ -713,6 +769,46 @@ async function compressVideo(file) {
         <li>Cola m&aacute;x.: <strong>5 jobs</strong> &middot; si est&aacute; llena, responde <code>503</code> con <code>retry_after_seconds: 60</code></li>
         <li>El archivo comprimido se guarda <strong>30 minutos</strong> tras la compresi&oacute;n, o se elimina inmediatamente despu&eacute;s de una descarga exitosa</li>
       </ul>
+
+      <h3>Par&aacute;metros de endpoints</h3>
+
+      <h4>POST /upload/init &mdash; JSON body</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Campo</th><th>Tipo</th><th>Requerido</th><th>Descripci&oacute;n</th></tr></thead>
+        <tbody>
+          <tr><td><code>filename</code></td><td>string</td><td>S&iacute;</td><td>Nombre original del archivo con extensi&oacute;n. Permitidos: <code>.mp4</code> <code>.mov</code> <code>.avi</code> <code>.mkv</code></td></tr>
+          <tr><td><code>total_size</code></td><td>entero</td><td>S&iacute;</td><td>Tama&ntilde;o total del video en <strong>bytes</strong>. M&aacute;x. 500 MB (524.288.000 bytes). Debe ser &gt; 0.</td></tr>
+          <tr><td><code>total_chunks</code></td><td>entero</td><td>S&iacute;</td><td>N&uacute;mero de chunks en que se divide el video. Entre 1 y 10.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Respuesta: <code>{ upload_id, chunk_size_recommended }</code></p>
+
+      <h4>POST /upload/chunk &mdash; multipart/form-data</h4>
+      <div class="note">No fijes <code>Content-Type: application/json</code> en este endpoint &mdash; el navegador/fetch lo establece autom&aacute;ticamente como <code>multipart/form-data</code> al pasar un objeto <code>FormData</code>.</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Campo</th><th>Tipo</th><th>Requerido</th><th>Descripci&oacute;n</th></tr></thead>
+        <tbody>
+          <tr><td><code>upload_id</code></td><td>string (form)</td><td>S&iacute;</td><td>El UUID retornado por <code>/init</code></td></tr>
+          <tr><td><code>chunk_index</code></td><td>entero (form)</td><td>S&iacute;</td><td>&Iacute;ndice 0-based de este chunk. Debe enviarse en orden: 0, 1, 2&hellip;</td></tr>
+          <tr><td><code>chunk</code></td><td>archivo (form)</td><td>S&iacute;</td><td>Fragmento binario del video. M&aacute;x. 90 MB por chunk.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Respuesta: <code>{ received, total }</code></p>
+
+      <h4>POST /upload/finalize &mdash; JSON body</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Campo</th><th>Tipo</th><th>Requerido</th><th>Descripci&oacute;n</th></tr></thead>
+        <tbody>
+          <tr><td><code>upload_id</code></td><td>string</td><td>S&iacute;</td><td>El mismo UUID utilizado durante la subida de chunks</td></tr>
+        </tbody>
+      </table></div>
+      <p>Respuesta: <code>{ job_id, status: "queued" }</code></p>
+
+      <h4>GET /status/{job_id} &mdash; sin body</h4>
+      <p>Solo el header <code>X-API-Key</code>. Retorna el objeto completo del job (ver <em>Respuesta del endpoint de estado</em> m&aacute;s abajo).</p>
+
+      <h4>GET /download/{job_id} &mdash; sin body</h4>
+      <p>Solo el header <code>X-API-Key</code>. Disponible solo cuando <code>status === "done"</code>. Retorna el archivo comprimido <code>video/mp4</code>. El archivo se elimina tras la transferencia &mdash; <strong>no</strong> uses <code>window.location.href</code> (no puede enviar headers). Usa <code>fetch</code> + blob (ver ejemplo JS).</p>
 
       <h3>Estados del job</h3>
       <div class="table-wrap"><table>

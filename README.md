@@ -64,6 +64,7 @@ vps_optimus_api/
 |---|---|---|---|
 | `GET` | `/` | No | Estado de la API |
 | `GET` | `/guide` | No | Guía interactiva bilingüe (HTML) |
+| `GET` | `/guide-ai` | No | Referencia JSON para agentes de IA (LLMs, LangChain, MCP, etc.) |
 | `GET` | `/api/v1/status` | Sí | Estado del servidor y colas de procesamiento |
 | `POST` | `/api/v1/media/images/compress` | Sí | Compresión de imágenes |
 | `POST` | `/api/v1/media/videos/upload/init` | Sí | Inicia la subida de un video · devuelve `upload_id` |
@@ -514,6 +515,7 @@ vps_optimus_api/
 |---|---|---|---|
 | `GET` | `/` | No | API status |
 | `GET` | `/guide` | No | Interactive bilingual guide (HTML) |
+| `GET` | `/guide-ai` | No | Machine-readable JSON reference for AI agents (LLMs, LangChain, MCP, etc.) |
 | `GET` | `/api/v1/status` | Yes | Server status and processing queues |
 | `POST` | `/api/v1/media/images/compress` | Yes | Image compression |
 | `POST` | `/api/v1/media/videos/upload/init` | Yes | Start a video upload · returns `upload_id` |
