@@ -46,9 +46,12 @@ async def ffprobe_duration_us(input_path: Path) -> int:
     try:
         proc = await asyncio.create_subprocess_exec(
             _FFPROBE,
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             str(input_path),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -112,16 +115,24 @@ async def compress_video_file(
 
     cmd = [
         _FFMPEG,
-        "-y",           # overwrite output without asking
-        "-i", str(input_path),
-        "-c:v", "libx264",
-        "-crf", "23",
-        "-preset", "medium",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",  # optimise for web streaming
-        "-progress", "pipe:1",      # write progress key=value pairs to stdout
-        "-nostats",                 # suppress redundant stderr stats
+        "-y",  # overwrite output without asking
+        "-i",
+        str(input_path),
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-preset",
+        "medium",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",  # optimise for web streaming
+        "-progress",
+        "pipe:1",  # write progress key=value pairs to stdout
+        "-nostats",  # suppress redundant stderr stats
         str(output_path),
     ]
 
