@@ -87,6 +87,21 @@ if [ "$PACKAGES_CHANGED" = true ]; then
     info "Dependencies updated and hash saved."
 fi
 
+# ─── Sync systemd service file if changed ────────────────────────────────────
+SERVICE_SRC="optimus-api.service"
+SERVICE_DEST="/etc/systemd/system/$SERVICE_NAME.service"
+
+if [ -f "$SERVICE_SRC" ]; then
+    if ! diff -q "$SERVICE_SRC" "$SERVICE_DEST" > /dev/null 2>&1; then
+        info "Service file changed. Updating $SERVICE_DEST..."
+        sudo cp "$SERVICE_SRC" "$SERVICE_DEST"
+        sudo systemctl daemon-reload
+        info "systemd daemon reloaded."
+    else
+        info "Service file unchanged. Skipping daemon-reload."
+    fi
+fi
+
 # ─── Restart service (always — gunicorn has no auto-reload) ──────────────────
 info "Restarting service '$SERVICE_NAME'..."
 
