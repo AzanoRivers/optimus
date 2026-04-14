@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -16,7 +15,7 @@ from app.services.job_manager import (
 
 logger = logging.getLogger(__name__)
 
-# ── FFmpeg availability check at import time ──────────────────────────────────
+# ── Binary availability check at import time ──────────────────────────────────
 
 _FFMPEG = shutil.which("ffmpeg")
 if _FFMPEG is None:
@@ -25,54 +24,129 @@ if _FFMPEG is None:
         "Install via: sudo dnf install -y ffmpeg"
     )
 
+_FFPROBE = shutil.which("ffprobe")
+if _FFPROBE is None:
+    logger.warning(
+        "ffprobe not found in PATH. Progress tracking will be disabled "
+        "(progress_pct will remain 0 during compression)."
+    )
 
-# ── Blocking compressor (runs inside ThreadPoolExecutor) ──────────────────────
+
+# ── ffprobe: get video duration in microseconds ───────────────────────────────
 
 
-def compress_video_file(input_path: Path, output_path: Path) -> tuple[int, int]:
+async def ffprobe_duration_us(input_path: Path) -> int:
     """
-    Compress a video using FFmpeg.
+    Return the video duration in microseconds using ffprobe.
+    Returns 0 if ffprobe is unavailable or the output cannot be parsed
+    (compression continues normally; progress_pct stays at 0).
+    """
+    if _FFPROBE is None:
+        return 0
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _FFPROBE,
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(input_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+        return int(float(stdout.decode().strip()) * 1_000_000)
+    except Exception:
+        return 0
+
+
+# ── Internal: read FFmpeg -progress pipe and update job.progress_pct ─────────
+
+
+async def _read_progress(
+    proc: asyncio.subprocess.Process,
+    jobs: dict,
+    job_id: str,
+    duration_us: int,
+) -> None:
+    """
+    Read FFmpeg stdout (-progress pipe:1) line by line.
+    Updates progress_pct on the job (0–99) while FFmpeg runs.
+    Reaching 100 is the responsibility of the caller after confirming exit 0.
+    """
+    async for raw_line in proc.stdout:  # type: ignore[union-attr]
+        line = raw_line.decode().strip()
+        if line.startswith("out_time_ms=") and duration_us > 0:
+            try:
+                # Despite the name, out_time_ms contains microseconds
+                elapsed_us = int(line.split("=", 1)[1])
+                pct = min(int(elapsed_us / duration_us * 100), 99)
+                update_job(jobs, job_id, progress_pct=pct)
+            except (ValueError, ZeroDivisionError):
+                pass
+
+
+# ── Async compressor (called directly from video_worker) ─────────────────────
+
+
+async def compress_video_file(
+    input_path: Path,
+    output_path: Path,
+    jobs: dict,
+    job_id: str,
+) -> tuple[int, int]:
+    """
+    Compress a video using FFmpeg (async, non-blocking).
 
     Codec : libx264, CRF 23, preset medium
     Audio : AAC 128 k
+    Writes progress_pct (0–99) to the job while running.
+    Sets progress_pct=100 is the caller's responsibility on success.
     Returns (input_size_bytes, output_size_bytes).
-    Raises RuntimeError if ffmpeg is not installed or exits with a non-zero code.
+    Raises RuntimeError if ffmpeg is unavailable, times out, or exits non-zero.
     """
     if _FFMPEG is None:
         raise RuntimeError("ffmpeg is not installed. Run: sudo dnf install -y ffmpeg")
 
     input_size = input_path.stat().st_size
+    duration_us = await ffprobe_duration_us(input_path)
 
     cmd = [
         _FFMPEG,
-        "-y",  # overwrite output without asking
-        "-i",
-        str(input_path),
-        "-c:v",
-        "libx264",
-        "-crf",
-        "23",
-        "-preset",
-        "medium",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-movflags",
-        "+faststart",  # optimise for web streaming
+        "-y",           # overwrite output without asking
+        "-i", str(input_path),
+        "-c:v", "libx264",
+        "-crf", "23",
+        "-preset", "medium",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",  # optimise for web streaming
+        "-progress", "pipe:1",      # write progress key=value pairs to stdout
+        "-nostats",                 # suppress redundant stderr stats
         str(output_path),
     ]
 
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        timeout=1800,  # 30 min hard limit
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
 
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace")[-1000:]
-        raise RuntimeError(f"FFmpeg failed (exit {result.returncode}): {stderr}")
+    try:
+        await asyncio.wait_for(
+            _read_progress(proc, jobs, job_id, duration_us),
+            timeout=1800.0,  # 30-minute hard limit
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()  # drain pipes to avoid child-process hang
+        raise RuntimeError("FFmpeg timed out after 30 minutes")
+
+    await proc.wait()
+
+    if proc.returncode != 0:
+        stderr_bytes = await proc.stderr.read()  # type: ignore[union-attr]
+        stderr = stderr_bytes.decode(errors="replace")[-1000:]
+        raise RuntimeError(f"FFmpeg failed (exit {proc.returncode}): {stderr}")
 
     output_size = output_path.stat().st_size
     return input_size, output_size
@@ -110,7 +184,7 @@ async def video_worker(app: FastAPI) -> None:
     """
     Consumes jobs from app.state.video_queue one at a time.
     Acquires ffmpeg_semaphore to guarantee a single FFmpeg process runs at once.
-    Offloads the blocking compress_video_file call to app.state.executor.
+    Calls compress_video_file directly (async — no executor needed for FFmpeg).
     """
     while True:
         job_id: str = await app.state.video_queue.get()
@@ -127,13 +201,12 @@ async def video_worker(app: FastAPI) -> None:
             output_path = upload_dir(job.upload_id) / "compressed" / "video.mp4"
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            loop = asyncio.get_event_loop()
             try:
-                in_size, out_size = await loop.run_in_executor(
-                    app.state.executor,
-                    compress_video_file,
+                in_size, out_size = await compress_video_file(
                     input_path,
                     output_path,
+                    app.state.jobs,
+                    job_id,
                 )
                 reduction = round((1 - out_size / in_size) * 100, 1) if in_size else 0.0
                 update_job(
@@ -148,9 +221,7 @@ async def video_worker(app: FastAPI) -> None:
                 # Free disk: remove assembled file, keep only compressed output
                 assembled = upload_dir(job.upload_id) / "assembled"
                 if assembled.exists():
-                    import shutil as _shutil
-
-                    _shutil.rmtree(assembled, ignore_errors=True)
+                    shutil.rmtree(assembled, ignore_errors=True)
 
                 logger.info(
                     "Video job %s done: %.1f%% reduction (%d → %d bytes)",

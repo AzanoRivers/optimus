@@ -429,6 +429,22 @@ _GUIDE_HTML = """<!DOCTYPE html>
         </tbody>
       </table></div>
 
+      <h3>Status response</h3>
+      <p>Each call to <code>/status/{job_id}</code> returns:</p>
+      <pre><code>{
+  "job_id":        "550e8400-...",
+  "status":        "processing",   // uploading | queued | processing | done | failed | expired
+  "progress_pct":  42,             // 0–99 while processing; 100 when done
+  "input_size":    0,              // bytes — available when done
+  "output_size":   0,              // bytes — available when done
+  "reduction_pct": 0.0,            // e.g. 67.3 — available when done
+  "error_msg":     null,           // string if failed
+  "file_deleted":  false           // true after a successful download
+}</code></pre>
+      <div class="note">
+        <strong>Building a progress bar:</strong> use <code>progress_pct</code> (integer 0–100) directly as the bar width percentage. Show an indeterminate spinner when <code>status</code> is <code>queued</code>. During <code>processing</code>, <code>progress_pct</code> rises from 0 to 99. It reaches 100 only when <code>status === "done"</code>.
+      </div>
+
       <h3>JavaScript example</h3>
       <pre><code>const API   = 'https://optimus.azanolabs.com';
 const KEY   = 'your-key';
@@ -466,12 +482,13 @@ async function compressVideo(file) {
     body: JSON.stringify({ upload_id })
   }).then(r =&gt; r.json());
 
-  // 4. Poll every 5 s
+  // 4. Poll every 3 s — use job.progress_pct (0–100) to drive a progress bar
   let job;
   do {
-    await new Promise(r =&gt; setTimeout(r, 5000));
+    await new Promise(r =&gt; setTimeout(r, 3000));
     job = await fetch(`${API}/api/v1/media/videos/status/${job_id}`,
       { headers: { 'X-API-Key': KEY } }).then(r =&gt; r.json());
+    // e.g. document.getElementById('bar').value = job.progress_pct;
   } while (job.status === 'queued' || job.status === 'processing');
 
   // 5. Download — fetch with header, trigger browser download via blob
@@ -710,6 +727,22 @@ async function compressVideo(file) {
         </tbody>
       </table></div>
 
+      <h3>Respuesta del endpoint de estado</h3>
+      <p>Cada llamada a <code>/status/{job_id}</code> retorna:</p>
+      <pre><code>{
+  "job_id":        "550e8400-...",
+  "status":        "processing",   // uploading | queued | processing | done | failed | expired
+  "progress_pct":  42,             // 0–99 mientras procesa; 100 cuando done
+  "input_size":    0,              // bytes — disponible cuando done
+  "output_size":   0,              // bytes — disponible cuando done
+  "reduction_pct": 0.0,            // ej. 67.3 — disponible cuando done
+  "error_msg":     null,           // string si fall&oacute;
+  "file_deleted":  false           // true tras una descarga exitosa
+}</code></pre>
+      <div class="note">
+        <strong>Barra de progreso:</strong> usa <code>progress_pct</code> (entero 0–100) directamente como el porcentaje de ancho de la barra. Muestra un spinner indeterminado cuando <code>status</code> es <code>queued</code>. Durante <code>processing</code>, <code>progress_pct</code> sube de 0 a 99. Llega a 100 solo cuando <code>status === "done"</code>.
+      </div>
+
       <h3>Ejemplo JavaScript</h3>
       <pre><code>const API   = 'https://optimus.azanolabs.com';
 const KEY   = 'tu-clave';
@@ -747,12 +780,13 @@ async function comprimirVideo(file) {
     body: JSON.stringify({ upload_id })
   }).then(r =&gt; r.json());
 
-  // 4. Polling cada 5 s
+  // 4. Polling cada 3 s — usa job.progress_pct (0–100) para actualizar la barra
   let job;
   do {
-    await new Promise(r =&gt; setTimeout(r, 5000));
+    await new Promise(r =&gt; setTimeout(r, 3000));
     job = await fetch(`${API}/api/v1/media/videos/status/${job_id}`,
       { headers: { 'X-API-Key': KEY } }).then(r =&gt; r.json());
+    // ej. document.getElementById('barra').value = job.progress_pct;
   } while (job.status === 'queued' || job.status === 'processing');
 
   // 5. Descarga — fetch con header, disparar descarga en browser via blob

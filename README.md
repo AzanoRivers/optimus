@@ -69,7 +69,7 @@ vps_optimus_api/
 | `POST` | `/api/v1/media/videos/upload/init` | Sí | Inicia la subida de un video · devuelve `upload_id` |
 | `POST` | `/api/v1/media/videos/upload/chunk` | Sí | Sube un fragmento del video (≤90 MB) |
 | `POST` | `/api/v1/media/videos/upload/finalize` | Sí | Finaliza la subida y encola la compresión · devuelve `job_id` |
-| `GET` | `/api/v1/media/videos/status/{job_id}` | Sí | Consulta el estado del job de compresión |
+| `GET` | `/api/v1/media/videos/status/{job_id}` | Sí | Consulta el estado del job · retorna `progress_pct` (0–100) para barra de carga |
 | `GET` | `/api/v1/media/videos/download/{job_id}` | Sí | Descarga el video comprimido |
 
 **POST `/api/v1/media/images/compress`** — multipart/form-data

@@ -1,0 +1,371 @@
+================================================================================
+FEATURE PLAN: FFmpeg Progress Tracking — progress_pct en tiempo real
+Fecha: 14 Abril 2026
+Estado: IMPLEMENTADO
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+CONTEXTO Y MOTIVACIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+  Actualmente el campo progress_pct del endpoint GET /status/{job_id} siempre
+  devuelve 0 mientras FFmpeg procesa, y salta a 100 al terminar.
+
+  CAUSA: compress_video_file() usa subprocess.run() (bloqueante). No hay forma
+  de leer su output mientras corre — solo se obtiene al finalizar.
+
+  SOLUCIÓN: Migrar a asyncio.create_subprocess_exec() con stdout=PIPE.
+  FFmpeg tiene un flag -progress pipe:1 que escribe progreso en stdout como
+  pares clave=valor. Leer ese stream línea a línea permite actualizar
+  progress_pct en tiempo real sin afectar la velocidad de compresión.
+
+  IMPACTO EN RENDIMIENTO: ninguno. FFmpeg tarda lo mismo; solo se añade
+  lectura de ~1 línea/s de texto en Python.
+
+
+────────────────────────────────────────────────────────────────────────────────
+CÓMO FUNCIONA EL PROGRESS DE FFMPEG
+────────────────────────────────────────────────────────────────────────────────
+
+  Con el flag -progress pipe:1, FFmpeg escribe en stdout bloques como:
+
+    frame=142
+    fps=28.40
+    bitrate=1024.0kbits/s
+    total_size=819200
+    out_time_us=4729166
+    out_time_ms=4729166        ← tiempo procesado en MICROSEGUNDOS (nombre confuso)
+    out_time=00:00:04.729166
+    dup_frames=0
+    drop_frames=0
+    speed=2.34x
+    progress=continue          ← mientras procesa
+    ...
+    progress=end               ← al terminar
+
+  CAMPO CLAVE: out_time_ms — valor en microsegundos (a pesar del sufijo _ms).
+  DURACIÓN TOTAL: obtenida antes de FFmpeg con ffprobe en microsegundos.
+
+  FÓRMULA:
+    pct = min( int(out_time_us / duration_us * 100), 99 )
+    → Se capa en 99 mientras FFmpeg procesa; se pone 100 al confirmar exit 0.
+    → Si ffprobe falla (devuelve 0), progress_pct se queda en 0 (no rompe nada).
+
+
+────────────────────────────────────────────────────────────────────────────────
+OBTENER DURACIÓN CON FFPROBE
+────────────────────────────────────────────────────────────────────────────────
+
+  ffprobe es parte del paquete FFmpeg — ya está instalado en el VPS.
+
+  Comando:
+    ffprobe -v error \
+            -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 \
+            input.mp4
+
+  Salida: un float en segundos, p. ej. "123.456789\n"
+
+  Conversión a microsegundos:
+    duration_us = int(float(output.strip()) * 1_000_000)
+
+  Si ffprobe no está disponible o falla → retorna 0.
+  progress_pct se queda en 0 durante el proceso (comportamiento actual).
+  La compresión continúa sin errores.
+
+
+────────────────────────────────────────────────────────────────────────────────
+MANEJO DEL TIMEOUT (30 MIN)
+────────────────────────────────────────────────────────────────────────────────
+
+  Antes: subprocess.run(..., timeout=1800) → lanza subprocess.TimeoutExpired.
+
+  Ahora: asyncio.wait_for() con timeout=1800.0 envolviendo la lectura del
+         stream de progreso. Si se agota el tiempo:
+           1. proc.kill() — termina el proceso FFmpeg
+           2. await proc.communicate() — drena los pipes abiertos (evita hang)
+           3. raise RuntimeError("FFmpeg timed out after 30 minutes")
+         El video_worker captura la excepción y actualiza status="failed".
+
+
+────────────────────────────────────────────────────────────────────────────────
+CAPTURA DE STDERR EN CASO DE ERROR
+────────────────────────────────────────────────────────────────────────────────
+
+  Con -nostats, FFmpeg apenas escribe en stderr (solo errores reales).
+  stderr=PIPE durante todo el proceso.
+
+  Al terminar la lectura del progress stream (proc.stdout llega a EOF):
+    - await proc.wait()         → obtiene returncode (inmediato, el proceso ya terminó)
+    - if returncode != 0:
+        stderr = (await proc.stderr.read()).decode(errors="replace")[-1000:]
+        raise RuntimeError(f"FFmpeg failed (exit {returncode}): {stderr}")
+
+  No hay ambigüedad: stdout se lee durante el progreso, stderr se lee
+  solo una vez al final si falla.
+
+
+────────────────────────────────────────────────────────────────────────────────
+CAMBIOS EN EL DISEÑO DE LA FUNCIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+  ANTES:
+    def compress_video_file(input_path, output_path) -> tuple[int, int]
+      - Síncrona (bloqueante)
+      - Llamada desde video_worker con loop.run_in_executor(executor, ...)
+
+  DESPUÉS:
+    async def compress_video_file(input_path, output_path, jobs, job, job_id)
+                                  -> tuple[int, int]
+      - Asíncrona (no bloquea el event loop)
+      - Llamada desde video_worker con: await compress_video_file(...)
+      - Recibe `jobs` y `job_id` para poder llamar update_job() internamente
+
+  Por qué NO run_in_executor para FFmpeg ya:
+    asyncio.create_subprocess_exec lanza el proceso nativo del SO sin bloquear
+    el event loop — no necesita un hilo intermediario. El event loop gestiona
+    el I/O del pipe directamente.
+
+  El executor de app.state (ThreadPoolExecutor) se sigue usando SOLO para
+  assemble_chunks (I/O de disco síncrono en video_router.py/finalize).
+  No se elimina del lifespan.
+
+
+────────────────────────────────────────────────────────────────────────────────
+NUEVO HELPER: ffprobe_duration_us()
+────────────────────────────────────────────────────────────────────────────────
+
+  async def ffprobe_duration_us(input_path: Path) -> int:
+      """Retorna duración del video en microsegundos. 0 si ffprobe falla."""
+      if _FFPROBE is None:
+          return 0
+      proc = await asyncio.create_subprocess_exec(
+          _FFPROBE,
+          "-v", "error",
+          "-show_entries", "format=duration",
+          "-of", "default=noprint_wrappers=1:nokey=1",
+          str(input_path),
+          stdout=asyncio.subprocess.PIPE,
+          stderr=asyncio.subprocess.DEVNULL,
+      )
+      stdout, _ = await proc.communicate()
+      try:
+          return int(float(stdout.decode().strip()) * 1_000_000)
+      except (ValueError, AttributeError):
+          return 0
+
+
+────────────────────────────────────────────────────────────────────────────────
+NUEVO HELPER INTERNO: _read_progress()
+────────────────────────────────────────────────────────────────────────────────
+
+  Coroutine privada que envuelve asyncio.wait_for() para separar la lógica
+  de lectura del manejo de timeout. Recibe el proceso ya iniciado.
+
+  async def _read_progress(proc, jobs, job_id, duration_us) -> None:
+      async for line in proc.stdout:
+          text = line.decode().strip()
+          if text.startswith("out_time_ms=") and duration_us > 0:
+              try:
+                  elapsed_us = int(text.split("=", 1)[1])
+                  pct = min(int(elapsed_us / duration_us * 100), 99)
+                  update_job(jobs, job_id, progress_pct=pct)
+              except ValueError:
+                  pass
+          # progress=end aparece antes del EOF pero no es necesario hacer break:
+          # el EOF llega al instante después; el loop termina solo.
+
+  Nota: no hace await proc.wait() — eso queda fuera en compress_video_file.
+
+
+────────────────────────────────────────────────────────────────────────────────
+COMPRESS_VIDEO_FILE (async — nueva firma completa)
+────────────────────────────────────────────────────────────────────────────────
+
+  async def compress_video_file(
+      input_path: Path,
+      output_path: Path,
+      jobs: dict,
+      job_id: str,
+  ) -> tuple[int, int]:
+
+    1. Verificar _FFMPEG != None.
+    2. Calcular input_size = input_path.stat().st_size
+    3. duration_us = await ffprobe_duration_us(input_path)
+    4. Construir cmd con -progress pipe:1 y -nostats.
+    5. proc = await asyncio.create_subprocess_exec(*cmd,
+           stdout=PIPE, stderr=PIPE)
+    6. try:
+           await asyncio.wait_for(_read_progress(proc, jobs, job_id, duration_us),
+                                  timeout=1800.0)
+       except asyncio.TimeoutError:
+           proc.kill()
+           await proc.communicate()   # drena pipes
+           raise RuntimeError("FFmpeg timed out after 30 minutes")
+    7. await proc.wait()
+    8. if proc.returncode != 0:
+           stderr = (await proc.stderr.read()).decode(errors="replace")[-1000:]
+           raise RuntimeError(f"FFmpeg failed (exit {proc.returncode}): {stderr}")
+    9. output_size = output_path.stat().st_size
+    10. return input_size, output_size
+
+
+────────────────────────────────────────────────────────────────────────────────
+CAMBIO EN VIDEO_WORKER
+────────────────────────────────────────────────────────────────────────────────
+
+  ANTES:
+    loop = asyncio.get_event_loop()
+    in_size, out_size = await loop.run_in_executor(
+        app.state.executor,
+        compress_video_file,
+        input_path,
+        output_path,
+    )
+
+  DESPUÉS:
+    in_size, out_size = await compress_video_file(
+        input_path,
+        output_path,
+        app.state.jobs,
+        job_id,
+    )
+
+  Se elimina: loop = asyncio.get_event_loop()
+  Sin cambios en el resto del worker (manejo de errores, cleanup, logging).
+
+
+────────────────────────────────────────────────────────────────────────────────
+COMANDO FFMPEG ACTUALIZADO (flags nuevos)
+────────────────────────────────────────────────────────────────────────────────
+
+  Se añaden dos flags al cmd existente:
+    "-progress", "pipe:1"   → escribe progreso en stdout (fd 1)
+    "-nostats",             → suprime las estadísticas redundantes de stderr
+
+  El resto permanece igual:
+    -y, -i, -c:v libx264, -crf 23, -preset medium,
+    -c:a aac, -b:a 128k, -movflags +faststart
+
+
+────────────────────────────────────────────────────────────────────────────────
+ARCHIVOS A MODIFICAR
+────────────────────────────────────────────────────────────────────────────────
+
+  app/services/video_compressor.py    ← ÚNICO archivo que cambia
+
+    Cambios:
+      - Eliminar: import subprocess
+      - Agregar:  _FFPROBE = shutil.which("ffprobe")
+      - Agregar:  async def ffprobe_duration_us(input_path) -> int
+      - Agregar:  async def _read_progress(proc, jobs, job_id, duration_us)
+      - Cambiar:  compress_video_file → async, nueva firma, lógica completa
+      - Cambiar:  video_worker → eliminar run_in_executor, await directo
+
+  Sin cambios en:
+    app/api/v1/media/video_router.py   (firma pública no cambia)
+    app/services/job_manager.py        (update_job ya existe e importado)
+    app/main.py                        (lifespan, executor intactos)
+    requirements.txt                   (sin nuevas dependencias)
+    app/guide.py                       (añadir sección "Status response" con shape JSON
+                                    y nota de barra de carga — EN + ES)
+
+
+────────────────────────────────────────────────────────────────────────────────
+ORDEN DE IMPLEMENTACIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+  ✅ 1. Eliminar import subprocess de video_compressor.py
+  ✅ 2. Agregar _FFPROBE = shutil.which("ffprobe") junto a _FFMPEG
+  ✅ 3. Implementar ffprobe_duration_us() coroutine
+  ✅ 4. Implementar _read_progress() helper coroutine
+  ✅ 5. Reescribir compress_video_file como async con asyncio.create_subprocess_exec
+  ✅ 6. Actualizar video_worker: eliminar run_in_executor, await directo
+  ✅ 7. Verificar imports (asyncio ya está, update_job ya importado)
+  ✅ 8. Arrancar servidor local y validar que no hay errores de import
+  ✅ 9. Actualizar app/guide.py: sección "Status response" (EN + ES) con shape
+         JSON y nota sobre barra de carga
+  ✅ 10. Commit
+
+
+────────────────────────────────────────────────────────────────────────────────
+DECISIONES TOMADAS
+────────────────────────────────────────────────────────────────────────────────
+
+  1. out_time_ms interpretado como microsegundos
+     El nombre del campo en el protocolo de -progress de FFmpeg es engañoso:
+     out_time_ms contiene el valor en microsegundos (igual que out_time_us).
+     Se usa directamente como elapsed_us sin conversión adicional.
+
+  2. progress_pct capado en 99 durante procesamiento → 100 al confirmar exit 0
+     Evita que el cliente vea "100%" antes de que el archivo esté listo.
+     video_worker establece progress_pct=100 junto con status="done".
+
+  3. ffprobe falla → progress_pct = 0 durante todo el proceso
+     No es un error de negocio. La compresión continúa y el video se entrega.
+     El cliente simplemente no verá progreso granular en ese caso.
+
+  4. -nostats en el comando FFmpeg
+     Evita que FFmpeg escriba en stderr las estadísticas en tiempo real
+     (que eran ilegibles de todos modos con subprocess.DEVNULL).
+     Solo los errores reales llegan a stderr.
+
+  5. asyncio.create_subprocess_exec en lugar de run_in_executor
+     FFmpeg es un proceso nativo del SO. El event loop gestiona el I/O del
+     pipe sin bloquear. No necesita un hilo en el ThreadPoolExecutor.
+     El executor se conserva para assemble_chunks (I/O de disco síncrono).
+
+  6. _read_progress como coroutine separada
+     Permite envolver con asyncio.wait_for() de forma limpia, sin mezclar
+     la lógica de lectura con el manejo de timeout y returncode.
+
+
+────────────────────────────────────────────────────────────────────────────────
+CRITERIOS DE ACEPTACIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+  CORRECCIÓN
+  ✅ AC-01  compress_video_file es async y puede ser awaited directamente
+  ✅ AC-02  video_worker ya no usa loop.run_in_executor para FFmpeg
+  ✅ AC-03  FFmpeg se lanza con -progress pipe:1 y -nostats
+  ✅ AC-04  get_event_loop() eliminado de video_worker (no necesario)
+
+  PROGRESS
+  ✅ AC-05  ffprobe_duration_us() retorna int en microsegundos
+  ✅ AC-06  Si ffprobe no está o falla, retorna 0 sin lanzar excepción
+  ✅ AC-07  progress_pct se actualiza a lo largo del procesamiento (0 → 99)
+  ✅ AC-08  progress_pct nunca llega a 100 mientras FFmpeg sigue corriendo
+  ✅ AC-09  progress_pct = 100 solo cuando status = "done" (set por video_worker)
+  ✅ AC-10  Si duration_us = 0, progress_pct se queda en 0 durante todo el proceso
+
+  TIMEOUT
+  ✅ AC-11  asyncio.wait_for con 1800s envuelve la lectura de progreso
+  ✅ AC-12  Al timeout: proc.kill() y proc.communicate() antes de raise
+  ✅ AC-13  RuntimeError("FFmpeg timed out") es capturado por video_worker → status="failed"
+
+  ERROR HANDLING
+  ✅ AC-14  stderr capturado como PIPE durante todo el proceso
+  ✅ AC-15  stderr se lee solo si returncode != 0 (sin I/O innecesario)
+  ✅ AC-16  RuntimeError con últimos 1000 chars de stderr si FFmpeg falla
+
+  LIMPIEZA DE CÓDIGO
+  ✅ AC-17  import subprocess eliminado de video_compressor.py
+  ✅ AC-18  _FFPROBE verificado con shutil.which() al importar el módulo
+  ✅ AC-19  Sin imports no usados
+  ✅ AC-20  Firma pública de compress_video_file compatible con video_worker
+            (video_router.py no se modifica)
+
+  COMPATIBILIDAD
+  ✅ AC-21  assemble_chunks sigue siendo síncrona (sin cambios)
+  ✅ AC-22  app.state.executor (ThreadPoolExecutor) sigue en uso para assemble_chunks
+  ✅ AC-23  El endpoint GET /status/{job_id} ya retorna progress_pct sin cambios
+  ✅ AC-24  Servidor arranca sin errores de import tras los cambios
+
+  DOCUMENTACIÓN
+  ✅ AC-25  guide.py (EN): sección "Status response" muestra shape JSON completo
+  ✅ AC-26  guide.py (EN): nota explica que progress_pct 0–99 durante processing; 100 en done
+  ✅ AC-27  guide.py (ES): misma sección en español ("Respuesta del endpoint de estado")
+  ✅ AC-28  Ejemplo JS (EN + ES): loop de polling actualizado a 3 s con comentario de barra
+
+================================================================================
