@@ -102,6 +102,23 @@ if [ -f "$SERVICE_SRC" ]; then
     fi
 fi
 
+# ─── Clean up temp_optimus on every deploy ───────────────────────────────────
+# The service restart below calls purge_temp_root() at startup, but any files
+# written after the last restart (orphaned chunks, assembled, compressed) won't
+# be tracked in memory and won't be cleaned by cleanup_jobs_loop. We wipe the
+# directory here, before the restart, so the disk is always clean after deploy.
+TEMP_DIR="/home/opc/temp_optimus"
+if [ -d "$TEMP_DIR" ]; then
+    COUNT=$(find "$TEMP_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l)
+    if [ "$COUNT" -gt 0 ]; then
+        warn "Cleaning $COUNT orphan folder(s) from $TEMP_DIR..."
+        rm -rf "${TEMP_DIR:?}/"*
+        info "Temp directory cleaned."
+    else
+        info "Temp directory already empty."
+    fi
+fi
+
 # ─── Restart service (always — gunicorn has no auto-reload) ──────────────────
 info "Restarting service '$SERVICE_NAME'..."
 
