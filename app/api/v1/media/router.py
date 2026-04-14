@@ -26,6 +26,7 @@ from app.services.image_compressor import (
     SUPPORTED_INPUT_EXTENSIONS,
     compress_image,
 )
+from app.api.v1.media.video_router import router as video_router
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,8 @@ router = APIRouter(
     tags=["media"],
     dependencies=[Depends(verify_api_key)],
 )
+
+router.include_router(video_router)
 
 
 @router.post("/images/compress")
@@ -232,12 +235,4 @@ async def compress_images(
         status_code=http_status,
         media_type="application/zip",
         headers=headers,
-    )
-
-
-@router.post("/videos/compress", status_code=status.HTTP_501_NOT_IMPLEMENTED)
-def compress_videos() -> dict:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Video compression is not available yet. Coming soon.",
     )

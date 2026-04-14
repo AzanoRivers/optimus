@@ -17,6 +17,7 @@ TEMP_ROOT = Path("/home/opc/temp_optimus")
 # JobState
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class JobState:
     job_id: str
@@ -45,6 +46,7 @@ class JobState:
 # Module-level registry — populated into app.state at startup.
 # Direct use is intentional: all helpers operate on the dict passed in.
 
+
 def get_job(jobs: Dict[str, JobState], job_id: str) -> Optional[JobState]:
     return jobs.get(job_id)
 
@@ -65,6 +67,7 @@ def delete_job(jobs: Dict[str, JobState], job_id: str) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 # Disk helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def upload_dir(upload_id: str) -> Path:
     return TEMP_ROOT / upload_id
@@ -104,13 +107,14 @@ def purge_temp_root() -> int:
 # Periodic cleanup coroutine
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 async def cleanup_jobs_loop(jobs: Dict[str, JobState]) -> None:
     """
     Background coroutine that runs every 5 minutes and enforces expiry rules:
 
       - uploading, no activity > 15 min  → delete folder + remove from registry
       - queued/processing, no update > 30 min → mark failed + delete folder
-      - done, file still on disk > 2 h   → delete folder, keep state
+      - done, file still on disk > 30 min → delete folder, keep state
       - done, file already deleted > 30 min  → remove from registry
       - failed > 1 h                     → remove from registry
       - expired > 1 h                    → remove from registry
@@ -129,10 +133,12 @@ async def cleanup_jobs_loop(jobs: Dict[str, JobState]) -> None:
                 to_remove.append(job_id)
 
             elif job.status in ("queued", "processing") and age > 1800:  # 30 min
-                update_job(jobs, job_id, status="failed", error_msg="Processing timeout.")
+                update_job(
+                    jobs, job_id, status="failed", error_msg="Processing timeout."
+                )
                 delete_upload_folder(job.upload_id)
 
-            elif job.status == "done" and not job.file_deleted and age > 7200:  # 2 h
+            elif job.status == "done" and not job.file_deleted and age > 1800:  # 30 min
                 delete_upload_folder(job.upload_id)
                 update_job(jobs, job_id, file_deleted=True)
 
@@ -146,4 +152,6 @@ async def cleanup_jobs_loop(jobs: Dict[str, JobState]) -> None:
             jobs.pop(job_id, None)
 
         if to_remove:
-            logger.info("Cleanup: removed %d expired job(s) from registry.", len(to_remove))
+            logger.info(
+                "Cleanup: removed %d expired job(s) from registry.", len(to_remove)
+            )

@@ -150,6 +150,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
     .s408 { color: #f0883e; }
     .s422 { color: #d2a8ff; }
     .s501 { color: #8b949e; }
+    .s503 { color: #f0883e; }
 
     .note {
       background: #1f2d5a; border-left: 3px solid #79c0ff;
@@ -217,6 +218,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
         <li><a href="#en-response">Response &amp; Headers</a></li>
         <li><a href="#en-status">HTTP Status Codes</a></li>
         <li><a href="#en-examples">curl Examples</a></li>
+        <li><a href="#en-video">Video Compression</a></li>
       </ol>
     </div>
 
@@ -249,10 +251,42 @@ _GUIDE_HTML = """<!DOCTYPE html>
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method post">POST</span>
-          <span class="path">/api/v1/media/videos/compress</span>
+          <span class="path">/api/v1/media/videos/upload/init</span>
           <span class="auth-badge required">X-API-Key required</span>
         </div>
-        <p style="margin-top:0.5rem;font-size:0.85rem"><em>Not implemented yet.</em> Returns <code>501</code>.</p>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Start a video upload session. Body: <code>{filename, total_size, total_chunks}</code>. Returns <code>upload_id</code>.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/media/videos/upload/chunk</span>
+          <span class="auth-badge required">X-API-Key required</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Upload one video chunk (max 90 MB). Form-data: <code>upload_id</code>, <code>chunk_index</code> (0-based), <code>chunk</code> (file). Repeat sequentially.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/media/videos/upload/finalize</span>
+          <span class="auth-badge required">X-API-Key required</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Signal that all chunks are uploaded. Body: <code>{upload_id}</code>. Returns <code>job_id</code> with <code>status: queued</code>. Responds <code>503</code> if the queue is full.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="path">/api/v1/media/videos/status/{job_id}</span>
+          <span class="auth-badge required">X-API-Key required</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Poll compression status. Returns <code>status</code>, <code>progress_pct</code>, <code>input_size</code>, <code>output_size</code>, <code>reduction_pct</code>, <code>error_msg</code>.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="path">/api/v1/media/videos/download/{job_id}</span>
+          <span class="auth-badge required">X-API-Key required</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Download the compressed video. Only available when <code>status: done</code>. File is deleted from the server once the transfer completes.</p>
       </div>
     </section>
 
@@ -318,7 +352,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <tr><td class="s401">401</td><td>Missing or invalid <code>X-API-Key</code></td></tr>
           <tr><td class="s408">408</td><td>Timeout &middot; 0 images processed in 85 s</td></tr>
           <tr><td class="s422">422</td><td>Validation error (bad params, unsupported format, file too large&hellip;)</td></tr>
-          <tr><td class="s501">501</td><td>Video compression not implemented</td></tr>
+          <tr><td class="s503">503</td><td>Server busy &middot; image capacity or video queue full (<code>retry_after_seconds</code> in body)</td></tr>
         </tbody>
       </table></div>
     </section>
@@ -359,6 +393,102 @@ _GUIDE_HTML = """<!DOCTYPE html>
   -D - --output compressed.webp 2&gt;&amp;1 | grep -i "x-optimus"</code></pre>
     </section>
 
+    <section id="en-video">
+      <h2>Video Compression</h2>
+      <p>Videos cannot be compressed in a single synchronous request (Cloudflare limit: 100 MB per request; FFmpeg compression can take minutes). The flow uses <strong>chunked upload</strong> + async processing with status polling.</p>
+
+      <h3>Flow</h3>
+      <ol>
+        <li><strong>Init</strong> &mdash; start an upload session, receive an <code>upload_id</code></li>
+        <li><strong>Chunks</strong> &mdash; send the video in pieces of &le;90 MB, <em>in order</em></li>
+        <li><strong>Finalize</strong> &mdash; signal the server that all chunks were sent; receive a <code>job_id</code> with <code>status: queued</code></li>
+        <li><strong>Poll</strong> &mdash; query <code>/status/{job_id}</code> every few seconds until <code>done</code> or <code>failed</code></li>
+        <li><strong>Download</strong> &mdash; fetch the compressed video; the file is deleted from the server once the transfer completes</li>
+      </ol>
+
+      <h3>Limits</h3>
+      <ul>
+        <li>Max video size: <strong>500 MB</strong></li>
+        <li>Max chunk size: <strong>90 MB</strong></li>
+        <li>Accepted formats: <strong>mp4, mov, avi, mkv</strong></li>
+        <li>Max queue: <strong>5 jobs</strong> &mdash; if full, responds <code>503</code> with <code>retry_after_seconds: 60</code></li>
+        <li>Compressed file kept for <strong>30 minutes</strong> after completion, or deleted immediately after a successful download</li>
+      </ul>
+
+      <h3>Job states</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>uploading</code></td><td>Receiving chunks</td></tr>
+          <tr><td><code>queued</code></td><td>All chunks received &middot; waiting for FFmpeg slot</td></tr>
+          <tr><td><code>processing</code></td><td>FFmpeg compressing</td></tr>
+          <tr><td><code>done</code></td><td>Ready to download</td></tr>
+          <tr><td><code>failed</code></td><td>FFmpeg error or processing timeout</td></tr>
+          <tr><td><code>expired</code></td><td>Upload abandoned (no chunk activity for 15 min)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>JavaScript example</h3>
+      <pre><code>const API   = 'https://optimus.azanolabs.com';
+const KEY   = 'your-key';
+const CHUNK = 80 * 1024 * 1024; // 80 MB per chunk
+
+async function compressVideo(file) {
+  const totalChunks = Math.ceil(file.size / CHUNK);
+
+  // 1. Init
+  const { upload_id } = await fetch(`${API}/api/v1/media/videos/upload/init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': KEY },
+    body: JSON.stringify({
+      filename: file.name,
+      total_size: file.size,
+      total_chunks: totalChunks
+    })
+  }).then(r =&gt; r.json());
+
+  // 2. Chunks (sequential &mdash; order matters)
+  for (let i = 0; i &lt; totalChunks; i++) {
+    const form = new FormData();
+    form.append('upload_id', upload_id);
+    form.append('chunk_index', String(i));
+    form.append('chunk', file.slice(i * CHUNK, (i + 1) * CHUNK));
+    await fetch(`${API}/api/v1/media/videos/upload/chunk`, {
+      method: 'POST', headers: { 'X-API-Key': KEY }, body: form
+    });
+  }
+
+  // 3. Finalize &mdash; responds { job_id, status: 'queued' }
+  const { job_id } = await fetch(`${API}/api/v1/media/videos/upload/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': KEY },
+    body: JSON.stringify({ upload_id })
+  }).then(r =&gt; r.json());
+
+  // 4. Poll every 5 s
+  let job;
+  do {
+    await new Promise(r =&gt; setTimeout(r, 5000));
+    job = await fetch(`${API}/api/v1/media/videos/status/${job_id}`,
+      { headers: { 'X-API-Key': KEY } }).then(r =&gt; r.json());
+  } while (job.status === 'queued' || job.status === 'processing');
+
+  // 5. Download — fetch with header, trigger browser download via blob
+  // (window.location.href cannot send X-API-Key — would return 401)
+  if (job.status === 'done') {
+    const res  = await fetch(`${API}/api/v1/media/videos/download/${job_id}`,
+      { headers: { 'X-API-Key': KEY } });
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = 'compressed_video.mp4'; a.click();
+    URL.revokeObjectURL(url);
+  } else {
+    console.error('Compression failed:', job.error_msg);
+  }
+}</code></pre>
+    </section>
+
   </div><!-- #lang-en -->
 
   <!-- ==================== ESPAÑOL ==================== -->
@@ -374,6 +504,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
         <li><a href="#es-response">Respuesta y Headers</a></li>
         <li><a href="#es-status">C&oacute;digos de estado HTTP</a></li>
         <li><a href="#es-examples">Ejemplos con curl</a></li>
+        <li><a href="#es-video">Compresi&oacute;n de video</a></li>
       </ol>
     </div>
 
@@ -406,10 +537,42 @@ _GUIDE_HTML = """<!DOCTYPE html>
       <div class="endpoint">
         <div class="endpoint-header">
           <span class="method post">POST</span>
-          <span class="path">/api/v1/media/videos/compress</span>
+          <span class="path">/api/v1/media/videos/upload/init</span>
           <span class="auth-badge required">X-API-Key requerido</span>
         </div>
-        <p style="margin-top:0.5rem;font-size:0.85rem"><em>No implementado todav&iacute;a.</em> Devuelve <code>501</code>.</p>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Inicia una sesi&oacute;n de subida. Body: <code>{filename, total_size, total_chunks}</code>. Devuelve <code>upload_id</code>.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/media/videos/upload/chunk</span>
+          <span class="auth-badge required">X-API-Key requerido</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Sube un fragmento del video (m&aacute;x. 90 MB). Form-data: <code>upload_id</code>, <code>chunk_index</code> (desde 0), <code>chunk</code> (archivo). Repetir en orden.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/media/videos/upload/finalize</span>
+          <span class="auth-badge required">X-API-Key requerido</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Notifica que se enviaron todos los chunks. Body: <code>{upload_id}</code>. Devuelve <code>job_id</code> con <code>status: queued</code>. Responde <code>503</code> si la cola est&aacute; llena.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="path">/api/v1/media/videos/status/{job_id}</span>
+          <span class="auth-badge required">X-API-Key requerido</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Consulta el estado de la compresi&oacute;n. Devuelve <code>status</code>, <code>progress_pct</code>, <code>input_size</code>, <code>output_size</code>, <code>reduction_pct</code>, <code>error_msg</code>.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method get">GET</span>
+          <span class="path">/api/v1/media/videos/download/{job_id}</span>
+          <span class="auth-badge required">X-API-Key requerido</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Descarga el video comprimido. Solo disponible cuando <code>status: done</code>. El archivo se elimina del servidor al terminar la transferencia.</p>
       </div>
     </section>
 
@@ -475,7 +638,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <tr><td class="s401">401</td><td><code>X-API-Key</code> ausente o inv&aacute;lido</td></tr>
           <tr><td class="s408">408</td><td>Timeout &middot; 0 im&aacute;genes procesadas en 85 s</td></tr>
           <tr><td class="s422">422</td><td>Error de validaci&oacute;n (params inv&aacute;lidos, formato no soportado, archivo muy grande&hellip;)</td></tr>
-          <tr><td class="s501">501</td><td>Compresi&oacute;n de video no implementada</td></tr>
+          <tr><td class="s503">503</td><td>Servidor ocupado &middot; capacidad de im&aacute;genes o cola de video llena (<code>retry_after_seconds</code> en el body)</td></tr>
         </tbody>
       </table></div>
     </section>
@@ -509,6 +672,102 @@ _GUIDE_HTML = """<!DOCTYPE html>
   -F "files=@foto2.png" \\
   -F "files=@foto3.webp" \\
   --output resultado.zip</code></pre>
+    </section>
+
+    <section id="es-video">
+      <h2>Compresi&oacute;n de video</h2>
+      <p>Los videos no pueden comprimirse en una sola petici&oacute;n s&iacute;ncrona (l&iacute;mite de Cloudflare: 100 MB por petici&oacute;n; la compresi&oacute;n con FFmpeg puede tardar minutos). El flujo usa <strong>subida por fragmentos</strong> + procesamiento async con polling de estado.</p>
+
+      <h3>Flujo</h3>
+      <ol>
+        <li><strong>Init</strong> &mdash; inicia una sesi&oacute;n de subida, recibe un <code>upload_id</code></li>
+        <li><strong>Chunks</strong> &mdash; env&iacute;a el video en partes de &le;90 MB, <em>en orden</em></li>
+        <li><strong>Finalize</strong> &mdash; notifica al servidor que se enviaron todos los chunks; recibe un <code>job_id</code> con <code>status: queued</code></li>
+        <li><strong>Poll</strong> &mdash; consulta <code>/status/{job_id}</code> cada pocos segundos hasta <code>done</code> o <code>failed</code></li>
+        <li><strong>Descarga</strong> &mdash; descarga el video comprimido; el archivo se elimina del servidor al terminar la transferencia</li>
+      </ol>
+
+      <h3>L&iacute;mites</h3>
+      <ul>
+        <li>Tama&ntilde;o m&aacute;ximo del video: <strong>500 MB</strong></li>
+        <li>Tama&ntilde;o m&aacute;ximo por chunk: <strong>90 MB</strong></li>
+        <li>Formatos aceptados: <strong>mp4, mov, avi, mkv</strong></li>
+        <li>Cola m&aacute;x.: <strong>5 jobs</strong> &mdash; si est&aacute; llena, responde <code>503</code> con <code>retry_after_seconds: 60</code></li>
+        <li>El archivo comprimido se guarda <strong>30 minutos</strong> tras la compresi&oacute;n, o se elimina inmediatamente despu&eacute;s de una descarga exitosa</li>
+      </ul>
+
+      <h3>Estados del job</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Estado</th><th>Significado</th></tr></thead>
+        <tbody>
+          <tr><td><code>uploading</code></td><td>Recibiendo chunks</td></tr>
+          <tr><td><code>queued</code></td><td>Todos los chunks recibidos &middot; esperando slot de FFmpeg</td></tr>
+          <tr><td><code>processing</code></td><td>FFmpeg comprimiendo</td></tr>
+          <tr><td><code>done</code></td><td>Listo para descargar</td></tr>
+          <tr><td><code>failed</code></td><td>Error de FFmpeg o timeout de procesamiento</td></tr>
+          <tr><td><code>expired</code></td><td>Upload abandonado (sin actividad en 15 min)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Ejemplo JavaScript</h3>
+      <pre><code>const API   = 'https://optimus.azanolabs.com';
+const KEY   = 'tu-clave';
+const CHUNK = 80 * 1024 * 1024; // 80 MB por chunk
+
+async function comprimirVideo(file) {
+  const totalChunks = Math.ceil(file.size / CHUNK);
+
+  // 1. Init
+  const { upload_id } = await fetch(`${API}/api/v1/media/videos/upload/init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': KEY },
+    body: JSON.stringify({
+      filename: file.name,
+      total_size: file.size,
+      total_chunks: totalChunks
+    })
+  }).then(r =&gt; r.json());
+
+  // 2. Chunks (enviar en orden &mdash; el orden importa)
+  for (let i = 0; i &lt; totalChunks; i++) {
+    const form = new FormData();
+    form.append('upload_id', upload_id);
+    form.append('chunk_index', String(i));
+    form.append('chunk', file.slice(i * CHUNK, (i + 1) * CHUNK));
+    await fetch(`${API}/api/v1/media/videos/upload/chunk`, {
+      method: 'POST', headers: { 'X-API-Key': KEY }, body: form
+    });
+  }
+
+  // 3. Finalize &mdash; responde { job_id, status: 'queued' }
+  const { job_id } = await fetch(`${API}/api/v1/media/videos/upload/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': KEY },
+    body: JSON.stringify({ upload_id })
+  }).then(r =&gt; r.json());
+
+  // 4. Polling cada 5 s
+  let job;
+  do {
+    await new Promise(r =&gt; setTimeout(r, 5000));
+    job = await fetch(`${API}/api/v1/media/videos/status/${job_id}`,
+      { headers: { 'X-API-Key': KEY } }).then(r =&gt; r.json());
+  } while (job.status === 'queued' || job.status === 'processing');
+
+  // 5. Descarga — fetch con header, disparar descarga en browser via blob
+  // (window.location.href no puede enviar X-API-Key — devolvería 401)
+  if (job.status === 'done') {
+    const res  = await fetch(`${API}/api/v1/media/videos/download/${job_id}`,
+      { headers: { 'X-API-Key': KEY } });
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = 'compressed_video.mp4'; a.click();
+    URL.revokeObjectURL(url);
+  } else {
+    console.error('Error en la compresión:', job.error_msg);
+  }
+}</code></pre>
     </section>
 
   </div><!-- #lang-es -->

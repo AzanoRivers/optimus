@@ -9,13 +9,14 @@ from app.api.v1.router import router as v1_router
 from app.core.config import settings
 from app.guide import get_guide
 from app.services.job_manager import Dict, JobState, cleanup_jobs_loop, purge_temp_root
+from app.services.video_compressor import video_worker
 
 logger = logging.getLogger(__name__)
 
 # ── Concurrency limits ────────────────────────────────────────────────────────
-_EXECUTOR_WORKERS = 2       # threads for CPU-bound work (Pillow, FFmpeg)
-_MAX_IMAGES_IN_FLIGHT = 6   # 503 if exceeded
-_MAX_VIDEO_QUEUE = 5        # asyncio.Queue maxsize; 503 if full
+_EXECUTOR_WORKERS = 2  # threads for CPU-bound work (Pillow, FFmpeg)
+_MAX_IMAGES_IN_FLIGHT = 6  # 503 if exceeded
+_MAX_VIDEO_QUEUE = 5  # asyncio.Queue maxsize; 503 if full
 
 
 @asynccontextmanager
@@ -36,6 +37,9 @@ async def lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(cleanup_jobs_loop(jobs))
     app.state.cleanup_task = cleanup_task
 
+    video_worker_task = asyncio.create_task(video_worker(app))
+    app.state.video_worker_task = video_worker_task
+
     logger.info(
         "Optimus startup: executor=%d workers, max_images=%d, video_queue=%d",
         _EXECUTOR_WORKERS,
@@ -49,6 +53,11 @@ async def lifespan(app: FastAPI):
     cleanup_task.cancel()
     try:
         await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    video_worker_task.cancel()
+    try:
+        await video_worker_task
     except asyncio.CancelledError:
         pass
     executor.shutdown(wait=False)

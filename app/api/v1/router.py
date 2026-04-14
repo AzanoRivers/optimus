@@ -19,9 +19,7 @@ async def server_status(request: Request) -> dict:
 
     # Count active video jobs (processing state)
     video_processing = sum(
-        1
-        for job in state.jobs.values()
-        if job.status == "processing"
+        1 for job in state.jobs.values() if job.status == "processing"
     )
 
     return {

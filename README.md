@@ -24,9 +24,10 @@
 - [Configuración de Nginx](#6-nginx-como-proxy-reverso)
 - [HTTPS con Cloudflare (subdominio)](#7-https-con-cloudflare-origin-certificate)
 - [Seguridad y rate limiting](#9-seguridad-y-rate-limiting)
+- [Gestión de concurrencia](#gestión-de-concurrencia)
 - [Variables de entorno](#variables-de-entorno)
 
-API de compresión de imágenes desplegada en Oracle Linux ARM (Ampere A1). Procesa imágenes en memoria sin escribir archivos temporales en disco, soporta lotes de hasta 10 archivos y devuelve el resultado como archivo directo o ZIP.
+API de compresión de imágenes y videos desplegada en Oracle Linux ARM (Ampere A1). Comprime imágenes en memoria sin archivos temporales, soporta lotes de hasta 10 archivos y devuelve el resultado como archivo directo o ZIP. Los videos se comprimen de forma asíncrona mediante subida por chunks, cola de procesamiento FFmpeg y descarga directa.
 
 ### Estructura del proyecto
 
@@ -63,8 +64,13 @@ vps_optimus_api/
 |---|---|---|---|
 | `GET` | `/` | No | Estado de la API |
 | `GET` | `/guide` | No | Guía interactiva bilingüe (HTML) |
+| `GET` | `/api/v1/status` | Sí | Estado del servidor y colas de procesamiento |
 | `POST` | `/api/v1/media/images/compress` | Sí | Compresión de imágenes |
-| `POST` | `/api/v1/media/videos/compress` | Sí | Compresión de videos (stub 501) |
+| `POST` | `/api/v1/media/videos/upload/init` | Sí | Inicia la subida de un video · devuelve `upload_id` |
+| `POST` | `/api/v1/media/videos/upload/chunk` | Sí | Sube un fragmento del video (≤90 MB) |
+| `POST` | `/api/v1/media/videos/upload/finalize` | Sí | Finaliza la subida y encola la compresión · devuelve `job_id` |
+| `GET` | `/api/v1/media/videos/status/{job_id}` | Sí | Consulta el estado del job de compresión |
+| `GET` | `/api/v1/media/videos/download/{job_id}` | Sí | Descarga el video comprimido |
 
 **POST `/api/v1/media/images/compress`** — multipart/form-data
 
@@ -394,6 +400,30 @@ sudo fail2ban-client status sshd
 > Configuración por defecto: 5 intentos fallidos → ban de 10 minutos.
 > Oracle Cloud ya deshabilita la autenticación por contraseña vía `50-cloud-init.conf` — solo funciona la clave privada.
 
+### Gestión de concurrencia
+
+El servidor corre con **1 worker Uvicorn** y gestión de concurrencia vía `asyncio`:
+
+- Las compresiones de imagen se procesan en un `ThreadPoolExecutor` (2 threads) — Pillow no bloquea el event loop.
+- Máximo **6 imágenes simultáneas**. Si se supera, el servidor responde `503` con `retry_after_seconds: 5`.
+- Los jobs de video se procesan de uno en uno (FFmpeg) con una cola de hasta **5 jobs**. Si la cola está llena, responde `503` con `retry_after_seconds: 60`.
+- Al arrancar, el servidor limpia automáticamente archivos temporales de sesiones anteriores.
+
+**Estado del servidor:**
+```bash
+curl -H "X-API-Key: TU_API_KEY" https://api.tudominio.com/api/v1/status
+```
+```json
+{
+  "status": "ok",
+  "images_in_flight": 0,
+  "images_capacity": 6,
+  "video_jobs_queued": 0,
+  "video_jobs_processing": 0,
+  "video_queue_capacity": 5
+}
+```
+
 ### Variables de entorno
 
 | Variable | Default | Descripción |
@@ -420,9 +450,10 @@ sudo fail2ban-client status sshd
 - [Nginx configuration](#6-nginx-reverse-proxy)
 - [HTTPS with Cloudflare (subdomain)](#7-https-with-cloudflare-origin-certificate)
 - [Security & rate limiting](#9-security--rate-limiting)
+- [Concurrency management](#concurrency-management)
 - [Environment variables](#environment-variables)
 
-Image compression API deployed on Oracle Linux ARM (Ampere A1). Processes images in-memory without writing temporary files to disk, supports batches of up to 10 files, and returns the result as a direct file or ZIP.
+Image and video compression API deployed on Oracle Linux ARM (Ampere A1). Compresses images in-memory without temporary files, supports batches of up to 10 files, and returns the result as a direct file or ZIP. Videos are compressed asynchronously via chunked upload, FFmpeg processing queue, and direct download.
 
 ### Project structure
 
@@ -459,8 +490,13 @@ vps_optimus_api/
 |---|---|---|---|
 | `GET` | `/` | No | API status |
 | `GET` | `/guide` | No | Interactive bilingual guide (HTML) |
+| `GET` | `/api/v1/status` | Yes | Server status and processing queues |
 | `POST` | `/api/v1/media/images/compress` | Yes | Image compression |
-| `POST` | `/api/v1/media/videos/compress` | Yes | Video compression (501 stub) |
+| `POST` | `/api/v1/media/videos/upload/init` | Yes | Start a video upload · returns `upload_id` |
+| `POST` | `/api/v1/media/videos/upload/chunk` | Yes | Upload one video chunk (≤90 MB) |
+| `POST` | `/api/v1/media/videos/upload/finalize` | Yes | Finalize upload and queue compression · returns `job_id` |
+| `GET` | `/api/v1/media/videos/status/{job_id}` | Yes | Query compression job status |
+| `GET` | `/api/v1/media/videos/download/{job_id}` | Yes | Download compressed video |
 
 **POST `/api/v1/media/images/compress`** — multipart/form-data
 
@@ -789,6 +825,30 @@ sudo fail2ban-client status sshd
 
 > Default: 5 failed attempts → 10-minute ban.
 > Oracle Cloud already disables password-based SSH authentication via `50-cloud-init.conf` — only the private key works.
+
+### Concurrency management
+
+The server runs with **1 Uvicorn worker** and `asyncio`-based concurrency:
+
+- Image compression runs in a `ThreadPoolExecutor` (2 threads) — Pillow does not block the event loop.
+- Maximum **6 simultaneous images**. If exceeded, the server responds `503` with `retry_after_seconds: 5`.
+- Video jobs are processed one at a time (FFmpeg) with a queue of up to **5 jobs**. If the queue is full, responds `503` with `retry_after_seconds: 60`.
+- On startup, the server automatically cleans up temporary files left from previous sessions.
+
+**Server status:**
+```bash
+curl -H "X-API-Key: YOUR_API_KEY" https://api.yourdomain.com/api/v1/status
+```
+```json
+{
+  "status": "ok",
+  "images_in_flight": 0,
+  "images_capacity": 6,
+  "video_jobs_queued": 0,
+  "video_jobs_processing": 0,
+  "video_queue_capacity": 5
+}
+```
 
 ### Environment variables
 
