@@ -81,6 +81,7 @@ async def root() -> dict:
     return {
         "name": settings.PROJECT_NAME,
         "version": settings.API_VERSION,
+        "author": "AzanoRivers",
         "status": "ok",
     }
 

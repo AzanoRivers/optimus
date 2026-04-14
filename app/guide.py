@@ -142,6 +142,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
     td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #21262d; }
     tr:last-child td { border-bottom: none; }
     td code { font-size: 0.78rem; }
+    td:first-child { white-space: nowrap; }
 
     .status-row td:first-child { font-family: monospace; font-weight: 700; }
     .s200 { color: #3fb950; }
@@ -364,12 +365,12 @@ _GUIDE_HTML = """<!DOCTYPE html>
   -H "X-API-Key: your-key" \\
   -F "files=@photo.jpg" \\
   --output compressed.jpg</code></pre>
-      <h3>Convert to WebP (recommended &mdash; highest compression)</h3>
+      <h3>Convert to WebP (recommended &middot; highest compression)</h3>
       <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp" \\
   -H "X-API-Key: your-key" \\
   -F "files=@photo.png" \\
   --output compressed.webp</code></pre>
-      <h3>Lossy PNG &mdash; keep PNG format, ~80% reduction</h3>
+      <h3>Lossy PNG: keep PNG format, ~80% reduction</h3>
       <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?lossy=true" \\
   -H "X-API-Key: your-key" \\
   -F "files=@photo.png" \\
@@ -399,11 +400,11 @@ _GUIDE_HTML = """<!DOCTYPE html>
 
       <h3>Flow</h3>
       <ol>
-        <li><strong>Init</strong> &mdash; start an upload session, receive an <code>upload_id</code></li>
-        <li><strong>Chunks</strong> &mdash; send the video in pieces of &le;90 MB, <em>in order</em></li>
-        <li><strong>Finalize</strong> &mdash; signal the server that all chunks were sent; receive a <code>job_id</code> with <code>status: queued</code></li>
-        <li><strong>Poll</strong> &mdash; query <code>/status/{job_id}</code> every few seconds until <code>done</code> or <code>failed</code></li>
-        <li><strong>Download</strong> &mdash; fetch the compressed video; the file is deleted from the server once the transfer completes</li>
+        <li><strong>Init</strong>: start an upload session, receive an <code>upload_id</code></li>
+        <li><strong>Chunks</strong>: send the video in pieces of &le;90 MB, <em>in order</em></li>
+        <li><strong>Finalize</strong>: signal the server that all chunks were sent; receive a <code>job_id</code> with <code>status: queued</code></li>
+        <li><strong>Poll</strong>: query <code>/status/{job_id}</code> every few seconds until <code>done</code> or <code>failed</code></li>
+        <li><strong>Download</strong>: fetch the compressed video; the file is deleted from the server once the transfer completes</li>
       </ol>
 
       <h3>Limits</h3>
@@ -411,7 +412,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
         <li>Max video size: <strong>500 MB</strong></li>
         <li>Max chunk size: <strong>90 MB</strong></li>
         <li>Accepted formats: <strong>mp4, mov, avi, mkv</strong></li>
-        <li>Max queue: <strong>5 jobs</strong> &mdash; if full, responds <code>503</code> with <code>retry_after_seconds: 60</code></li>
+        <li>Max queue: <strong>5 jobs</strong> &middot; if full, responds <code>503</code> with <code>retry_after_seconds: 60</code></li>
         <li>Compressed file kept for <strong>30 minutes</strong> after completion, or deleted immediately after a successful download</li>
       </ul>
 
@@ -447,7 +448,7 @@ async function compressVideo(file) {
     })
   }).then(r =&gt; r.json());
 
-  // 2. Chunks (sequential &mdash; order matters)
+  // 2. Chunks (sequential, order matters)
   for (let i = 0; i &lt; totalChunks; i++) {
     const form = new FormData();
     form.append('upload_id', upload_id);
@@ -458,7 +459,7 @@ async function compressVideo(file) {
     });
   }
 
-  // 3. Finalize &mdash; responds { job_id, status: 'queued' }
+  // 3. Finalize: responds { job_id, status: 'queued' }
   const { job_id } = await fetch(`${API}/api/v1/media/videos/upload/finalize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Key': KEY },
@@ -650,12 +651,12 @@ async function compressVideo(file) {
   -H "X-API-Key: tu-clave" \\
   -F "files=@foto.jpg" \\
   --output comprimido.jpg</code></pre>
-      <h3>Convertir a WebP (recomendado &mdash; m&aacute;xima compresi&oacute;n)</h3>
+      <h3>Convertir a WebP (recomendado &middot; m&aacute;xima compresi&oacute;n)</h3>
       <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?out=webp" \\
   -H "X-API-Key: tu-clave" \\
   -F "files=@foto.png" \\
   --output comprimido.webp</code></pre>
-      <h3>PNG lossy &mdash; conservar formato PNG, ~80% de reducci&oacute;n</h3>
+      <h3>PNG lossy: conservar formato PNG, ~80% de reducci&oacute;n</h3>
       <pre><code>curl -X POST "https://optimus.azanolabs.com/api/v1/media/images/compress?lossy=true" \\
   -H "X-API-Key: tu-clave" \\
   -F "files=@foto.png" \\
@@ -680,11 +681,11 @@ async function compressVideo(file) {
 
       <h3>Flujo</h3>
       <ol>
-        <li><strong>Init</strong> &mdash; inicia una sesi&oacute;n de subida, recibe un <code>upload_id</code></li>
-        <li><strong>Chunks</strong> &mdash; env&iacute;a el video en partes de &le;90 MB, <em>en orden</em></li>
-        <li><strong>Finalize</strong> &mdash; notifica al servidor que se enviaron todos los chunks; recibe un <code>job_id</code> con <code>status: queued</code></li>
-        <li><strong>Poll</strong> &mdash; consulta <code>/status/{job_id}</code> cada pocos segundos hasta <code>done</code> o <code>failed</code></li>
-        <li><strong>Descarga</strong> &mdash; descarga el video comprimido; el archivo se elimina del servidor al terminar la transferencia</li>
+        <li><strong>Init</strong>: inicia una sesi&oacute;n de subida, recibe un <code>upload_id</code></li>
+        <li><strong>Chunks</strong>: env&iacute;a el video en partes de &le;90 MB, <em>en orden</em></li>
+        <li><strong>Finalize</strong>: notifica al servidor que se enviaron todos los chunks; recibe un <code>job_id</code> con <code>status: queued</code></li>
+        <li><strong>Poll</strong>: consulta <code>/status/{job_id}</code> cada pocos segundos hasta <code>done</code> o <code>failed</code></li>
+        <li><strong>Descarga</strong>: descarga el video comprimido; el archivo se elimina del servidor al terminar la transferencia</li>
       </ol>
 
       <h3>L&iacute;mites</h3>
@@ -692,7 +693,7 @@ async function compressVideo(file) {
         <li>Tama&ntilde;o m&aacute;ximo del video: <strong>500 MB</strong></li>
         <li>Tama&ntilde;o m&aacute;ximo por chunk: <strong>90 MB</strong></li>
         <li>Formatos aceptados: <strong>mp4, mov, avi, mkv</strong></li>
-        <li>Cola m&aacute;x.: <strong>5 jobs</strong> &mdash; si est&aacute; llena, responde <code>503</code> con <code>retry_after_seconds: 60</code></li>
+        <li>Cola m&aacute;x.: <strong>5 jobs</strong> &middot; si est&aacute; llena, responde <code>503</code> con <code>retry_after_seconds: 60</code></li>
         <li>El archivo comprimido se guarda <strong>30 minutos</strong> tras la compresi&oacute;n, o se elimina inmediatamente despu&eacute;s de una descarga exitosa</li>
       </ul>
 
@@ -728,7 +729,7 @@ async function comprimirVideo(file) {
     })
   }).then(r =&gt; r.json());
 
-  // 2. Chunks (enviar en orden &mdash; el orden importa)
+  // 2. Chunks (enviar en orden, el orden importa)
   for (let i = 0; i &lt; totalChunks; i++) {
     const form = new FormData();
     form.append('upload_id', upload_id);
@@ -739,7 +740,7 @@ async function comprimirVideo(file) {
     });
   }
 
-  // 3. Finalize &mdash; responde { job_id, status: 'queued' }
+  // 3. Finalize: responde { job_id, status: 'queued' }
   const { job_id } = await fetch(`${API}/api/v1/media/videos/upload/finalize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Key': KEY },
