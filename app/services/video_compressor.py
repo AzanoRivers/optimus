@@ -142,6 +142,11 @@ async def compress_video_file(
         stderr=asyncio.subprocess.PIPE,
     )
 
+    # Store proc reference on the job so the cancel endpoint can kill it
+    _job = jobs.get(job_id)
+    if _job is not None:
+        _job.ffmpeg_proc = proc
+
     try:
         await asyncio.wait_for(
             _read_progress(proc, jobs, job_id, duration_us),
@@ -151,6 +156,11 @@ async def compress_video_file(
         proc.kill()
         await proc.communicate()  # drain pipes to avoid child-process hang
         raise RuntimeError("FFmpeg timed out after 30 minutes")
+    finally:
+        # Always clear proc reference — job may no longer exist if cancelled
+        _job = jobs.get(job_id)
+        if _job is not None:
+            _job.ffmpeg_proc = None
 
     await proc.wait()
 
@@ -196,16 +206,27 @@ async def video_worker(app: FastAPI) -> None:
     Consumes jobs from app.state.video_queue one at a time.
     Acquires ffmpeg_semaphore to guarantee a single FFmpeg process runs at once.
     Calls compress_video_file directly (async — no executor needed for FFmpeg).
+
+    Cancellation: the cancel endpoint removes the job from app.state.jobs and
+    kills ffmpeg_proc if running. The worker detects the missing job at two
+    checkpoints (before and after acquiring the semaphore) and skips gracefully.
     """
     while True:
         job_id: str = await app.state.video_queue.get()
 
+        # Checkpoint 1: job was cancelled while queued → skip
         job = app.state.jobs.get(job_id)
         if job is None:
             app.state.video_queue.task_done()
             continue
 
         async with app.state.ffmpeg_semaphore:
+            # Checkpoint 2: job was cancelled while waiting for the semaphore
+            job = app.state.jobs.get(job_id)
+            if job is None:
+                app.state.video_queue.task_done()
+                continue
+
             update_job(app.state.jobs, job_id, status="processing")
 
             input_path = upload_dir(job.upload_id) / "assembled" / "video.mp4"
@@ -243,13 +264,19 @@ async def video_worker(app: FastAPI) -> None:
                 )
 
             except Exception as exc:
-                logger.exception("Video job %s failed: %s", job_id, exc)
-                update_job(
-                    app.state.jobs,
-                    job_id,
-                    status="failed",
-                    error_msg=str(exc),
-                )
-                delete_upload_folder(job.upload_id)
+                # If the job was cancelled while FFmpeg was running, the cancel
+                # endpoint already deleted the folder and removed the job from
+                # the registry — don't overwrite state or double-delete.
+                if app.state.jobs.get(job_id) is None:
+                    logger.info("Video job %s: FFmpeg interrupted by cancel.", job_id)
+                else:
+                    logger.exception("Video job %s failed: %s", job_id, exc)
+                    update_job(
+                        app.state.jobs,
+                        job_id,
+                        status="failed",
+                        error_msg=str(exc),
+                    )
+                    delete_upload_folder(job.upload_id)
 
         app.state.video_queue.task_done()

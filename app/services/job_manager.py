@@ -5,7 +5,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,10 @@ class JobState:
     reduction_pct: float = 0.0
     error_msg: Optional[str] = None
     file_deleted: bool = False
+    # Reference to the active FFmpeg subprocess — set by compress_video_file,
+    # cleared on completion. Used by the cancel endpoint to kill the process.
+    # Typed as Any to avoid importing asyncio.subprocess at module level.
+    ffmpeg_proc: Optional[Any] = field(default=None, repr=False)
 
     def touch(self) -> None:
         self.updated_at = datetime.utcnow()

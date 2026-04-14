@@ -22,6 +22,7 @@ from starlette.background import BackgroundTask
 from app.core.security import verify_api_key
 from app.services.job_manager import (
     JobState,
+    delete_job,
     delete_upload_folder,
     get_job,
     update_job,
@@ -301,6 +302,42 @@ async def video_status(job_id: str, request: Request) -> dict:
         "error_msg": job.error_msg,
         "file_deleted": job.file_deleted,
     }
+
+
+@router.delete("/upload/{upload_id}", status_code=status.HTTP_200_OK)
+async def cancel_upload(upload_id: str, request: Request) -> dict:
+    """
+    Cancel an in-progress upload or compression job.
+
+    Works in any state:
+      - uploading / queued: deletes chunks from disk, removes job from registry.
+        The video_worker skips the job when it dequeues it (job no longer exists).
+      - processing: kills the active FFmpeg process, deletes all data, removes job.
+        The video_worker detects the missing job after the exception and logs it.
+      - done (file not yet downloaded): deletes the compressed file, removes job.
+      - failed / expired: cleans up any remaining disk data, removes job.
+
+    Idempotent: returns 404 if the job is already gone.
+    """
+    upload_id = _safe_upload_id(upload_id)
+    job = _require_job(request.app.state.jobs, upload_id)
+
+    # Kill FFmpeg if it is actively running
+    if job.ffmpeg_proc is not None:
+        try:
+            job.ffmpeg_proc.kill()
+            logger.info("Job %s: FFmpeg process killed by cancel request.", upload_id)
+        except Exception:
+            logger.debug("Job %s: FFmpeg kill failed (already finished?).", upload_id)
+
+    # Delete all data from disk (chunks, assembled, compressed)
+    delete_upload_folder(job.upload_id)
+
+    # Remove from in-memory registry so video_worker skips it if queued
+    delete_job(request.app.state.jobs, upload_id)
+
+    logger.info("Job %s cancelled and cleaned up.", upload_id)
+    return {"cancelled": True, "job_id": upload_id}
 
 
 @router.get("/download/{job_id}", status_code=status.HTTP_200_OK)

@@ -136,14 +136,16 @@ _GUIDE_AI = {
         "description": (
             "Video compression is async due to the Cloudflare 100 MB per-request limit and "
             "FFmpeg processing time (can take minutes for large files). "
-            "Use this 5-step flow: init -> upload chunks sequentially -> finalize -> poll status -> download."
+            "Use this 5-step flow: init -> upload chunks sequentially -> finalize -> poll status -> download. "
+            "To cancel at any point, call DELETE /upload/{upload_id}."
         ),
         "flow": [
-            "1. POST /api/v1/media/videos/upload/init          — start session, get upload_id",
-            "2. POST /api/v1/media/videos/upload/chunk         — send chunks in order (0, 1, 2…)",
-            "3. POST /api/v1/media/videos/upload/finalize      — signal upload complete, get job_id",
-            "4. GET  /api/v1/media/videos/status/{job_id}      — poll every 3 s until done or failed",
-            "5. GET  /api/v1/media/videos/download/{job_id}    — download compressed file (one-time)",
+            "1. POST   /api/v1/media/videos/upload/init          — start session, get upload_id",
+            "2. POST   /api/v1/media/videos/upload/chunk         — send chunks in order (0, 1, 2…)",
+            "3. POST   /api/v1/media/videos/upload/finalize      — signal upload complete, get job_id",
+            "4. GET    /api/v1/media/videos/status/{job_id}      — poll every 3 s until done or failed",
+            "5. GET    /api/v1/media/videos/download/{job_id}    — download compressed file (one-time)",
+            "cancel:   DELETE /api/v1/media/videos/upload/{upload_id} — cancel and clean up at any step",
         ],
         "job_states": {
             "uploading": "Server is receiving chunks.",
@@ -301,6 +303,30 @@ _GUIDE_AI = {
                     "Use fetch() -> response.blob() -> URL.createObjectURL() -> anchor click pattern.",
                 ],
                 "error_410": "File already downloaded or job expired.",
+            },
+            "cancel": {
+                "method": "DELETE",
+                "path": "/api/v1/media/videos/upload/{upload_id}",
+                "auth_required": True,
+                "path_params": {
+                    "upload_id": "UUID string returned by /init (same as job_id).",
+                },
+                "body": None,
+                "description": (
+                    "Cancel and clean up a video upload or compression job at any stage. "
+                    "Works in all states: uploading, queued, processing, done, failed. "
+                    "If FFmpeg is actively running (processing), it is killed immediately. "
+                    "All temporary files (chunks, assembled, compressed) are deleted from the server. "
+                    "The job is removed from the in-memory registry."
+                ),
+                "response": {
+                    "http_status": 200,
+                    "body": {
+                        "cancelled": True,
+                        "job_id": "UUID string of the cancelled job",
+                    },
+                },
+                "error_404": "Job not found (already cancelled, expired, or never created).",
             },
         },
         "limits": {
