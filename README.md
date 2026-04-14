@@ -139,7 +139,31 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 sudo dnf install python3.9 python3.9-pip -y
 ```
 
-#### 2. Clonar el proyecto
+#### 2. Instalar FFmpeg y ffprobe (requerido para compresión de video)
+
+Los repositorios ARM64 de Oracle Linux no incluyen FFmpeg. Se usa el binario estático de [johnvansickle.com](https://johnvansickle.com/ffmpeg/):
+
+```bash
+# Descargar y extraer en /tmp
+wget -P /tmp https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz
+tar xf /tmp/ffmpeg-release-arm64-static.tar.xz -C /tmp
+
+# Copiar ambos binarios al sistema
+sudo cp /tmp/ffmpeg-*-arm64-static/ffmpeg  /usr/local/bin/ffmpeg
+sudo cp /tmp/ffmpeg-*-arm64-static/ffprobe /usr/local/bin/ffprobe
+sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+
+# Limpiar
+rm -rf /tmp/ffmpeg-*-arm64-static /tmp/ffmpeg-release-arm64-static.tar.xz
+
+# Verificar
+ffmpeg -version
+ffprobe -version
+```
+
+> Versión instalada en producción: **ffmpeg 7.0.2** / **ffprobe 7.0.2** (static ARM64)
+
+#### 3. Clonar el proyecto
 
 ```bash
 cd /srv
@@ -147,7 +171,7 @@ git clone <tu-repo> optimusapi
 cd optimusapi
 ```
 
-#### 3. Inicialización única
+#### 4. Inicialización única
 
 ```bash
 chmod +x scripts/linux/setup.sh scripts/linux/deploy.sh
@@ -155,14 +179,14 @@ chmod +x scripts/linux/setup.sh scripts/linux/deploy.sh
 # → crea .venv, instala paquetes, copia .env
 ```
 
-#### 4. Editar variables de entorno
+#### 5. Editar variables de entorno
 
 ```bash
 nano .env
 # Asegúrate de que DEBUG=false en producción
 ```
 
-#### 5. Servicio systemd
+#### 6. Servicio systemd
 
 Crear `/etc/systemd/system/optimusapi.service`:
 
@@ -194,7 +218,7 @@ sudo systemctl status optimusapi
 > 2 workers es un buen punto de partida para la mayoría de entornos.
 > El `-` en `EnvironmentFile` hace que systemd ignore el archivo si no existe.
 
-#### 6. Nginx como proxy reverso
+#### 7. Nginx como proxy reverso
 
 Instalar y habilitar:
 
@@ -247,7 +271,7 @@ curl http://127.0.0.1:8000      # directo a gunicorn
 curl http://api.tudominio.com   # a través de nginx
 ```
 
-#### 7. HTTPS con Cloudflare Origin Certificate
+#### 8. HTTPS con Cloudflare Origin Certificate
 
 > **Aplica cuando:** el VPS sirve desde un subdominio (ej. `api.tudominio.com`) y el dominio raíz (`tudominio.com`) ya tiene otra app (Vercel, Netlify, etc.) con el proxy de Cloudflare activo. Cambiar el modo SSL de la zona afectaría el dominio principal; esta solución habilita HTTPS solo en el subdominio del VPS.
 
@@ -332,14 +356,14 @@ curl https://api.tudominio.com
 # → {"name":"OptimusApi","version":"1.0.0","status":"ok"}
 ```
 
-#### 8. Futuros deploys
+#### 9. Futuros deploys
 
 ```bash
 ./scripts/linux/deploy.sh
 # → git pull → verifica paquetes → reinicia el servicio
 ```
 
-#### 9. Seguridad y rate limiting
+#### 10. Seguridad y rate limiting
 
 **Límite de tamaño de request**
 
@@ -565,7 +589,31 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 sudo dnf install python3.9 python3.9-pip -y
 ```
 
-#### 2. Clone the project
+#### 2. Install FFmpeg and ffprobe (required for video compression)
+
+ARM64 Oracle Linux repositories do not include FFmpeg. Use the static build from [johnvansickle.com](https://johnvansickle.com/ffmpeg/):
+
+```bash
+# Download and extract to /tmp
+wget -P /tmp https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz
+tar xf /tmp/ffmpeg-release-arm64-static.tar.xz -C /tmp
+
+# Copy both binaries to the system
+sudo cp /tmp/ffmpeg-*-arm64-static/ffmpeg  /usr/local/bin/ffmpeg
+sudo cp /tmp/ffmpeg-*-arm64-static/ffprobe /usr/local/bin/ffprobe
+sudo chmod +x /usr/local/bin/ffmpeg /usr/local/bin/ffprobe
+
+# Clean up
+rm -rf /tmp/ffmpeg-*-arm64-static /tmp/ffmpeg-release-arm64-static.tar.xz
+
+# Verify
+ffmpeg -version
+ffprobe -version
+```
+
+> Version installed in production: **ffmpeg 7.0.2** / **ffprobe 7.0.2** (static ARM64)
+
+#### 3. Clone the project
 
 ```bash
 cd /srv
@@ -573,7 +621,7 @@ git clone <your-repo> optimusapi
 cd optimusapi
 ```
 
-#### 3. One-time setup
+#### 4. One-time setup
 
 ```bash
 chmod +x scripts/linux/setup.sh scripts/linux/deploy.sh
@@ -581,14 +629,14 @@ chmod +x scripts/linux/setup.sh scripts/linux/deploy.sh
 # → creates .venv, installs packages, copies .env
 ```
 
-#### 4. Configure environment variables
+#### 5. Configure environment variables
 
 ```bash
 nano .env
 # Make sure DEBUG=false in production
 ```
 
-#### 5. systemd service
+#### 6. systemd service
 
 Create `/etc/systemd/system/optimusapi.service`:
 
@@ -620,7 +668,7 @@ sudo systemctl status optimusapi
 > 2 workers is a good starting point for most environments.
 > The `-` in `EnvironmentFile` makes systemd ignore the file if it does not exist.
 
-#### 6. Nginx reverse proxy
+#### 7. Nginx reverse proxy
 
 Install and enable:
 
@@ -673,7 +721,7 @@ curl http://127.0.0.1:8000     # direct to gunicorn
 curl http://api.yourdomain.com # through nginx
 ```
 
-#### 7. HTTPS with Cloudflare Origin Certificate
+#### 8. HTTPS with Cloudflare Origin Certificate
 
 > **Applies when:** the VPS is served from a subdomain (e.g. `api.yourdomain.com`) and the root domain (`yourdomain.com`) already has another app (Vercel, Netlify, etc.) behind Cloudflare's proxy. Changing the zone-wide SSL mode would affect the main domain; this approach enables HTTPS only for the VPS subdomain.
 
@@ -758,14 +806,14 @@ curl https://api.yourdomain.com
 # → {"name":"OptimusApi","version":"1.0.0","status":"ok"}
 ```
 
-#### 8. Future deploys
+#### 9. Future deploys
 
 ```bash
 ./scripts/linux/deploy.sh
 # → git pull → checks packages → restarts the service
 ```
 
-#### 9. Security & rate limiting
+#### 10. Security & rate limiting
 
 **Request body size limit**
 
