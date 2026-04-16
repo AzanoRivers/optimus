@@ -116,6 +116,22 @@ def _require_job(jobs: dict, job_id: str) -> JobState:
     return job
 
 
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+
+def _abort_upload(jobs: dict, upload_id: str, error_msg: str) -> None:
+    """Mark a job as failed and immediately delete its upload folder from disk.
+
+    Called whenever a non-recoverable error occurs during chunk upload so that
+    orphan folders don't accumulate until the periodic cleanup loop runs.
+    """
+    update_job(jobs, upload_id, status="failed", error_msg=error_msg)
+    delete_upload_folder(upload_id)
+    logger.warning(
+        "Upload aborted (folder deleted): job=%s reason=%r", upload_id, error_msg
+    )
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 
@@ -181,23 +197,29 @@ async def upload_chunk(
     # Read and validate chunk size
     data = await chunk.read()
     if len(data) > _MAX_CHUNK_BYTES:
+        msg = f"Chunk exceeds the 90 MB limit ({len(data) / 1024 / 1024:.1f} MB)."
+        _abort_upload(request.app.state.jobs, upload_id, msg)
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Chunk exceeds the 90 MB limit ({len(data) / 1024 / 1024:.1f} MB).",
+            detail=msg,
         )
     if len(data) == 0:
+        msg = "Empty chunk received."
+        _abort_upload(request.app.state.jobs, upload_id, msg)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Empty chunk received.",
+            detail=msg,
         )
 
     # Validate index
     meta = upload_dir(upload_id) / "meta.txt"
     total_chunks = int(meta.read_text(encoding="utf-8"))
     if chunk_index < 0 or chunk_index >= total_chunks:
+        msg = f"chunk_index {chunk_index} out of range (0–{total_chunks - 1})."
+        _abort_upload(request.app.state.jobs, upload_id, msg)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"chunk_index {chunk_index} out of range (0–{total_chunks - 1}).",
+            detail=msg,
         )
 
     # Write part file
