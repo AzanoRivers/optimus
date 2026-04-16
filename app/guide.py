@@ -226,10 +226,21 @@ _GUIDE_HTML = """<!DOCTYPE html>
 
     <section id="en-auth">
       <h2>Authentication</h2>
-      <p>All endpoints under <code>/api/v1/</code> require an API key in the request header:</p>
+      <p>Endpoints under <code>/api/v1/</code> support two authentication methods:</p>
+      <h3>Master API Key &mdash; server-to-server</h3>
+      <p>Used by your backend (e.g. a Vercel server function). <strong>Never expose this key in the browser.</strong></p>
       <pre><code>X-API-Key: your-secret-key</code></pre>
-      <p>Requests without a valid key return <code>401 Unauthorized</code>.</p>
-      <p>The <code>GET /guide</code> and <code>GET /guide-ai</code> endpoints are public &middot; no key required.</p>
+      <h3>Session Token &mdash; browser direct calls</h3>
+      <p>Short-lived token (2&nbsp;h TTL) obtained server-side via <code>POST /api/v1/auth/session-token</code> and forwarded to the browser. Allows the browser to call the VPS directly without exposing the master key.</p>
+      <pre><code>X-Session-Token: &lt;token&gt;</code></pre>
+      <h4>Token lifecycle</h4>
+      <ul>
+        <li>Valid for <strong>2 hours</strong> from the moment of issuance</li>
+        <li>Renew proactively ~12 min before expiry to avoid mid-upload failures</li>
+        <li>If a token expires during an upload, cancel the job (<code>DELETE /upload/{upload_id}</code>) and retry with a fresh token</li>
+        <li>Tokens live in server memory &mdash; a VPS restart invalidates all active tokens</li>
+      </ul>
+      <p>Requests without a valid key or token return <code>401 Unauthorized</code>. The <code>GET /guide</code> and <code>GET /guide-ai</code> endpoints are public &middot; no authentication required.</p>
     </section>
 
     <section id="en-endpoints">
@@ -249,6 +260,14 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <span class="auth-badge">public</span>
         </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">Machine-readable JSON reference optimized for AI agents (LLMs, LangChain, MCP, etc.). Same content as this guide but structured for programmatic consumption &mdash; no HTML parsing required.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/auth/session-token</span>
+          <span class="auth-badge required">X-API-Key required</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Exchange the master API key for a short-lived session token (2&nbsp;h TTL). Call this server-side and forward the token to the browser. The browser then authenticates with <code>X-Session-Token</code> to call the VPS directly. Body: none. Response: <code>{ token, expires_in }</code>.</p>
       </div>
       <div class="endpoint">
         <div class="endpoint-header">
@@ -441,7 +460,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
         <tbody>
           <tr><td><code>filename</code></td><td>string</td><td>Yes</td><td>Original file name including extension. Allowed: <code>.mp4</code> <code>.mov</code> <code>.avi</code> <code>.mkv</code></td></tr>
           <tr><td><code>total_size</code></td><td>integer</td><td>Yes</td><td>Total video size in <strong>bytes</strong>. Max 500 MB (524,288,000 bytes). Must be &gt; 0.</td></tr>
-          <tr><td><code>total_chunks</code></td><td>integer</td><td>Yes</td><td>Number of chunks the video will be split into. Between 1 and 10.</td></tr>
+          <tr><td><code>total_chunks</code></td><td>integer</td><td>Yes</td><td>Number of chunks the video will be split into. Between 1 and 128.</td></tr>
         </tbody>
       </table></div>
       <p>Response: <code>{ upload_id, chunk_size_recommended }</code></p>
@@ -585,10 +604,21 @@ async function compressVideo(file) {
 
     <section id="es-auth">
       <h2>Autenticaci&oacute;n</h2>
-      <p>Todos los endpoints bajo <code>/api/v1/</code> requieren una API key en el header de la petici&oacute;n:</p>
+      <p>Los endpoints bajo <code>/api/v1/</code> soportan dos m&eacute;todos de autenticaci&oacute;n:</p>
+      <h3>API Key maestra &mdash; servidor a servidor</h3>
+      <p>Usada por tu backend (ej. una funci&oacute;n serverless de Vercel). <strong>Nunca expongas esta clave en el navegador.</strong></p>
       <pre><code>X-API-Key: tu-clave-secreta</code></pre>
-      <p>Las peticiones sin clave v&aacute;lida devuelven <code>401 Unauthorized</code>.</p>
-      <p>Los endpoints <code>GET /guide</code> y <code>GET /guide-ai</code> son p&uacute;blicos &middot; no requieren clave.</p>
+      <h3>Token de sesi&oacute;n &mdash; llamadas directas desde el navegador</h3>
+      <p>Token de corta duraci&oacute;n (TTL de 2&nbsp;h) obtenido del lado del servidor via <code>POST /api/v1/auth/session-token</code> y enviado al navegador. Permite que el navegador llame al VPS directamente sin exponer la clave maestra.</p>
+      <pre><code>X-Session-Token: &lt;token&gt;</code></pre>
+      <h4>Ciclo de vida del token</h4>
+      <ul>
+        <li>V&aacute;lido por <strong>2 horas</strong> desde su emisi&oacute;n</li>
+        <li>Renovar proactivamente ~12 min antes de que expire para evitar fallos a mitad de subida</li>
+        <li>Si el token vence durante una subida, cancela el job (<code>DELETE /upload/{upload_id}</code>) y reintenta con un token nuevo</li>
+        <li>Los tokens viven en memoria del servidor &mdash; reiniciar el VPS invalida todos los tokens activos</li>
+      </ul>
+      <p>Las peticiones sin clave o token v&aacute;lido devuelven <code>401 Unauthorized</code>. Los endpoints <code>GET /guide</code> y <code>GET /guide-ai</code> son p&uacute;blicos &middot; no requieren autenticaci&oacute;n.</p>
     </section>
 
     <section id="es-endpoints">
@@ -608,6 +638,14 @@ async function compressVideo(file) {
           <span class="auth-badge">p&uacute;blico</span>
         </div>
         <p style="margin-top:0.5rem;font-size:0.85rem">Referencia JSON optimizada para agentes de IA (LLMs, LangChain, MCP, etc.). Mismo contenido que esta gu&iacute;a pero estructurado para consumo program&aacute;tico &mdash; sin necesidad de parsear HTML.</p>
+      </div>
+      <div class="endpoint">
+        <div class="endpoint-header">
+          <span class="method post">POST</span>
+          <span class="path">/api/v1/auth/session-token</span>
+          <span class="auth-badge required">X-API-Key requerido</span>
+        </div>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Intercambia la API key maestra por un token de sesi&oacute;n de corta duraci&oacute;n (2&nbsp;h TTL). Llama esto desde el servidor y env&iacute;a el token al navegador. El navegador entonces se autentica con <code>X-Session-Token</code> para llamar al VPS directamente. Body: ninguno. Respuesta: <code>{ token, expires_in }</code>.</p>
       </div>
       <div class="endpoint">
         <div class="endpoint-header">
@@ -795,7 +833,7 @@ async function compressVideo(file) {
         <tbody>
           <tr><td><code>filename</code></td><td>string</td><td>S&iacute;</td><td>Nombre original del archivo con extensi&oacute;n. Permitidos: <code>.mp4</code> <code>.mov</code> <code>.avi</code> <code>.mkv</code></td></tr>
           <tr><td><code>total_size</code></td><td>entero</td><td>S&iacute;</td><td>Tama&ntilde;o total del video en <strong>bytes</strong>. M&aacute;x. 500 MB (524.288.000 bytes). Debe ser &gt; 0.</td></tr>
-          <tr><td><code>total_chunks</code></td><td>entero</td><td>S&iacute;</td><td>N&uacute;mero de chunks en que se divide el video. Entre 1 y 10.</td></tr>
+          <tr><td><code>total_chunks</code></td><td>entero</td><td>S&iacute;</td><td>N&uacute;mero de chunks en que se divide el video. Entre 1 y 128.</td></tr>
         </tbody>
       </table></div>
       <p>Respuesta: <code>{ upload_id, chunk_size_recommended }</code></p>

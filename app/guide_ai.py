@@ -20,10 +20,51 @@ _GUIDE_AI = {
     },
     # ── Authentication ────────────────────────────────────────────────────────
     "authentication": {
-        "type": "api_key",
-        "header": "X-API-Key",
-        "scope": "All endpoints under /api/v1/ require X-API-Key. GET /guide and GET /guide-ai are public.",
-        "on_missing_or_invalid": "HTTP 401",
+        "methods": {
+            "master_api_key": {
+                "header": "X-API-Key",
+                "scope": "All endpoints under /api/v1/. Server-to-server only — never expose in the browser.",
+                "on_missing_or_invalid": "HTTP 401",
+            },
+            "session_token": {
+                "header": "X-Session-Token",
+                "scope": "All /api/v1/media/* endpoints. Short-lived token (2 h TTL) for browser direct calls.",
+                "how_to_obtain": "POST /api/v1/auth/session-token with X-API-Key → { token, expires_in }",
+                "ttl_seconds": 7200,
+                "renewal_guidance": (
+                    "Renew proactively before expiry (recommended: 12 min margin). "
+                    "If expired mid-upload, cancel the job (DELETE /upload/{upload_id}) "
+                    "then retry with a fresh token."
+                ),
+                "storage": "In-memory on the VPS. A VPS restart invalidates all active tokens.",
+                "on_missing_or_invalid": "HTTP 401",
+            },
+        },
+        "public_endpoints": ["GET /guide", "GET /guide-ai"],
+    },
+    # ── Auth endpoints ────────────────────────────────────────────────────────
+    "auth": {
+        "session_token": {
+            "method": "POST",
+            "path": "/api/v1/auth/session-token",
+            "auth_required": True,
+            "auth_method": "X-API-Key only (master key)",
+            "body": None,
+            "description": (
+                "Exchange the master API key for a short-lived session token (2 h TTL). "
+                "Call this server-side (e.g. from a Vercel function) and forward the token to the browser. "
+                "The browser then uses X-Session-Token to call the VPS directly "
+                "without the master key ever being exposed."
+            ),
+            "response": {
+                "http_status": 200,
+                "body": {
+                    "token": "hex string (64 chars) — pass this as X-Session-Token header",
+                    "expires_in": "integer — seconds until expiry (7200 = 2 h)",
+                },
+            },
+            "error_401": "Missing or invalid X-API-Key.",
+        },
     },
     # ── Image compression ─────────────────────────────────────────────────────
     "images": {
@@ -181,7 +222,7 @@ _GUIDE_AI = {
                         "type": "integer",
                         "required": True,
                         "min": 1,
-                        "max": 10,
+                        "max": 128,
                         "description": "Number of chunks the video will be split into.",
                     },
                 },
@@ -332,7 +373,7 @@ _GUIDE_AI = {
         "limits": {
             "max_video_size_bytes": 524288000,
             "max_chunk_size_bytes": 94371840,
-            "max_chunks_per_upload": 10,
+            "max_chunks_per_upload": 128,
             "max_concurrent_queue_size": 5,
             "processing_timeout_seconds": 1800,
             "file_retention_after_done_minutes": 30,
