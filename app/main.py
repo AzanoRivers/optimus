@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as v1_router
 from app.core.config import settings
@@ -73,6 +74,21 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
+
+# CORS — allow browser direct calls from configured origins
+_cors_origins = settings.get_cors_origins()
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["X-API-Key", "X-Session-Token", "Content-Type"],
+        expose_headers=[
+            "X-Optimus-Status", "X-Optimus-Processed", "X-Optimus-Total",
+            "X-Optimus-Input-Size", "X-Optimus-Output-Size", "X-Optimus-Reduction-Pct",
+            "X-Vps-Skipped", "X-Vps-Warning",
+        ],
+    )
 
 app.include_router(v1_router, prefix="/api/v1")
 

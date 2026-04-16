@@ -19,7 +19,6 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 from starlette.background import BackgroundTask
 
-from app.core.security import verify_api_key
 from app.services.job_manager import (
     JobState,
     delete_job,
@@ -35,8 +34,10 @@ logger = logging.getLogger(__name__)
 # ── Limits ────────────────────────────────────────────────────────────────────
 
 _MAX_VIDEO_BYTES = 500 * 1024 * 1024  # 500 MB
-_MAX_CHUNK_BYTES = 90 * 1024 * 1024  # 90 MB
-_MAX_CHUNKS = 10
+_MAX_CHUNK_BYTES = (
+    90 * 1024 * 1024
+)  # 90 MB (browser sends ~10 MB; this is a server-side guard)
+_MAX_CHUNKS = 128  # supports up to 500 MB at 4 MB/chunk with headroom
 _ALLOWED_EXTENSIONS = {"mp4", "mov", "avi", "mkv"}
 
 # ── Router ────────────────────────────────────────────────────────────────────

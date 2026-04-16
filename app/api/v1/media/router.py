@@ -21,7 +21,7 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 
-from app.core.security import verify_api_key
+from app.core.security import verify_token
 from app.services.image_compressor import (
     SUPPORTED_INPUT_EXTENSIONS,
     compress_image,
@@ -44,7 +44,7 @@ _CONTENT_TYPE = {
 router = APIRouter(
     prefix="/media",
     tags=["media"],
-    dependencies=[Depends(verify_api_key)],
+    dependencies=[Depends(verify_token)],
 )
 
 router.include_router(video_router)
