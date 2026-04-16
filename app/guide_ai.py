@@ -1,6 +1,6 @@
 """
 Machine-readable API reference for AI agents.
-Served at GET /guide-ai — no authentication required.
+Served at GET /guide-ai, no authentication required.
 """
 
 from fastapi.responses import JSONResponse
@@ -23,7 +23,7 @@ _GUIDE_AI = {
         "methods": {
             "master_api_key": {
                 "header": "X-API-Key",
-                "scope": "All endpoints under /api/v1/. Server-to-server only — never expose in the browser.",
+                "scope": "All endpoints under /api/v1/. Server-to-server only (never expose in the browser).",
                 "on_missing_or_invalid": "HTTP 401",
             },
             "session_token": {
@@ -59,8 +59,8 @@ _GUIDE_AI = {
             "response": {
                 "http_status": 200,
                 "body": {
-                    "token": "hex string (64 chars) — pass this as X-Session-Token header",
-                    "expires_in": "integer — seconds until expiry (7200 = 2 h)",
+                    "token": "hex string (64 chars) : pass this as X-Session-Token header",
+                    "expires_in": "integer : seconds until expiry (7200 = 2 h)",
                 },
             },
             "error_401": "Missing or invalid X-API-Key.",
@@ -148,11 +148,11 @@ _GUIDE_AI = {
             },
             "response_headers": {
                 "X-Optimus-Status": "complete | partial",
-                "X-Optimus-Processed": "integer — images successfully compressed",
-                "X-Optimus-Total": "integer — total images received in request",
-                "X-Optimus-Input-Size": "integer — total input size in bytes",
-                "X-Optimus-Output-Size": "integer — total output size in bytes",
-                "X-Optimus-Reduction-Pct": "float — e.g. 83.6 (percentage size reduction)",
+                "X-Optimus-Processed": "integer : images successfully compressed",
+                "X-Optimus-Total": "integer : total images received in request",
+                "X-Optimus-Input-Size": "integer : total input size in bytes",
+                "X-Optimus-Output-Size": "integer : total output size in bytes",
+                "X-Optimus-Reduction-Pct": "float : e.g. 83.6 (percentage size reduction)",
             },
             "limits": {
                 "max_files_per_request": 10,
@@ -164,11 +164,11 @@ _GUIDE_AI = {
             },
             "http_status_codes": {
                 "200": "All images processed successfully.",
-                "206": "Partial — timeout hit after >= 1 image processed. X-Optimus-Status: partial.",
+                "206": "Partial : timeout hit after >= 1 image processed. X-Optimus-Status: partial.",
                 "401": "Missing or invalid X-API-Key.",
-                "408": "Timeout — 0 images processed within 85 s.",
+                "408": "Timeout : 0 images processed within 85 s.",
                 "422": "Validation error: unsupported format, file too large, invalid params.",
-                "503": "Server busy — max concurrent image jobs reached. Body: { retry_after_seconds: N }.",
+                "503": "Server busy : max concurrent image jobs reached. Body: { retry_after_seconds: N }.",
             },
         },
     },
@@ -181,12 +181,12 @@ _GUIDE_AI = {
             "To cancel at any point, call DELETE /upload/{upload_id}."
         ),
         "flow": [
-            "1. POST   /api/v1/media/videos/upload/init          — start session, get upload_id",
-            "2. POST   /api/v1/media/videos/upload/chunk         — send chunks in order (0, 1, 2…)",
-            "3. POST   /api/v1/media/videos/upload/finalize      — signal upload complete, get job_id",
-            "4. GET    /api/v1/media/videos/status/{job_id}      — poll every 3 s until done or failed",
-            "5. GET    /api/v1/media/videos/download/{job_id}    — download compressed file (one-time)",
-            "cancel:   DELETE /api/v1/media/videos/upload/{upload_id} — cancel and clean up at any step",
+            "1. POST   /api/v1/media/videos/upload/init          -> start session, get upload_id",
+            "2. POST   /api/v1/media/videos/upload/chunk         -> send chunks in order (0, 1, 2…)",
+            "3. POST   /api/v1/media/videos/upload/finalize      -> signal upload complete, get job_id",
+            "4. GET    /api/v1/media/videos/status/{job_id}      -> poll every 3 s until done or failed",
+            "5. GET    /api/v1/media/videos/download/{job_id}    -> download compressed file (one-time)",
+            "cancel:   DELETE /api/v1/media/videos/upload/{upload_id} -> cancel and clean up at any step",
         ],
         "job_states": {
             "uploading": "Server is receiving chunks.",
@@ -194,7 +194,7 @@ _GUIDE_AI = {
             "processing": "FFmpeg is compressing the video. progress_pct rises from 0 to 99.",
             "done": "Compression complete. File ready to download.",
             "failed": "FFmpeg error or processing timeout (1800 s). Check error_msg field.",
-            "expired": "Upload session abandoned — no chunk activity for 15 minutes.",
+            "expired": "Upload session abandoned (no chunk activity for 15 minutes).",
         },
         "endpoints": {
             "init": {
@@ -229,7 +229,7 @@ _GUIDE_AI = {
                 "response": {
                     "http_status": 201,
                     "body": {
-                        "upload_id": "UUID string — use this in every subsequent /chunk and /finalize call",
+                        "upload_id": "UUID string : use this in every subsequent /chunk and /finalize call",
                         "chunk_size_recommended": 94371840,
                     },
                 },
@@ -241,7 +241,7 @@ _GUIDE_AI = {
                 "request_content_type": "multipart/form-data",
                 "critical_notes": [
                     "Do NOT set Content-Type header manually. Let the HTTP client set it automatically "
-                    "when using FormData — it needs to include the multipart boundary.",
+                    "when using FormData (it needs to include the multipart boundary).",
                     "Chunks MUST be sent sequentially in order starting at index 0.",
                 ],
                 "body_fields": {
@@ -268,8 +268,8 @@ _GUIDE_AI = {
                 "response": {
                     "http_status": 200,
                     "body": {
-                        "received": "integer — number of chunks received so far",
-                        "total": "integer — total chunks expected (from /init)",
+                        "received": "integer : number of chunks received so far",
+                        "total": "integer : total chunks expected (from /init)",
                     },
                 },
             },
@@ -288,7 +288,7 @@ _GUIDE_AI = {
                 "response": {
                     "http_status": 202,
                     "body": {
-                        "job_id": "UUID string — use this for /status and /download",
+                        "job_id": "UUID string : use this for /status and /download",
                         "status": "queued",
                     },
                 },
@@ -315,11 +315,11 @@ _GUIDE_AI = {
                             "Use directly as CSS progress bar width percentage. "
                             "Show indeterminate spinner when status=queued."
                         ),
-                        "input_size": "integer bytes — populated when status=done",
-                        "output_size": "integer bytes — populated when status=done",
-                        "reduction_pct": "float e.g. 67.3 — populated when status=done",
-                        "error_msg": "string | null — populated when status=failed",
-                        "file_deleted": "boolean — true after a successful download",
+                        "input_size": "integer bytes : populated when status=done",
+                        "output_size": "integer bytes : populated when status=done",
+                        "reduction_pct": "float e.g. 67.3 : populated when status=done",
+                        "error_msg": "string | null : populated when status=failed",
+                        "file_deleted": "boolean : true after a successful download",
                     },
                 },
             },
@@ -380,12 +380,12 @@ _GUIDE_AI = {
             "upload_session_expiry_minutes": 15,
         },
         "http_status_codes": {
-            "201": "Init successful — upload session created.",
+            "201": "Init successful : upload session created.",
             "200": "Chunk accepted or status/download success.",
-            "202": "Finalize accepted — job queued.",
+            "202": "Finalize accepted : job queued.",
             "401": "Missing or invalid X-API-Key.",
             "410": "File already downloaded or expired.",
-            "422": "Validation error — check body field names, types, and allowed values.",
+            "422": "Validation error : check body field names, types, and allowed values.",
             "503": "Video queue full. Body: { retry_after_seconds: 60 }.",
         },
     },
@@ -412,13 +412,13 @@ async function compressVideo(file) {
     body: JSON.stringify({ filename: file.name, total_size: file.size, total_chunks: totalChunks }),
   }).then(r => r.json());
 
-  // 2. Chunks — sequential, order is mandatory
+  // 2. Chunks (sequential, order is mandatory)
   for (let i = 0; i < totalChunks; i++) {
     const form = new FormData();
     form.append('upload_id', upload_id);
     form.append('chunk_index', String(i));   // form field, not JSON
     form.append('chunk', file.slice(i * CHUNK, (i + 1) * CHUNK));
-    // DO NOT set Content-Type — FormData sets it with the correct boundary automatically
+    // DO NOT set Content-Type, FormData sets it with the correct boundary automatically
     await fetch(`${API}/api/v1/media/videos/upload/chunk`, {
       method: 'POST', headers: { 'X-API-Key': KEY }, body: form,
     });

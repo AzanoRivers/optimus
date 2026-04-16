@@ -227,10 +227,10 @@ _GUIDE_HTML = """<!DOCTYPE html>
     <section id="en-auth">
       <h2>Authentication</h2>
       <p>Endpoints under <code>/api/v1/</code> support two authentication methods:</p>
-      <h3>Master API Key &mdash; server-to-server</h3>
+      <h3>Master API Key (server-to-server)</h3>
       <p>Used by your backend (e.g. a Vercel server function). <strong>Never expose this key in the browser.</strong></p>
       <pre><code>X-API-Key: your-secret-key</code></pre>
-      <h3>Session Token &mdash; browser direct calls</h3>
+      <h3>Session Token (browser direct calls)</h3>
       <p>Short-lived token (2&nbsp;h TTL) obtained server-side via <code>POST /api/v1/auth/session-token</code> and forwarded to the browser. Allows the browser to call the VPS directly without exposing the master key.</p>
       <pre><code>X-Session-Token: &lt;token&gt;</code></pre>
       <h4>Token lifecycle</h4>
@@ -238,7 +238,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
         <li>Valid for <strong>2 hours</strong> from the moment of issuance</li>
         <li>Renew proactively ~12 min before expiry to avoid mid-upload failures</li>
         <li>If a token expires during an upload, cancel the job (<code>DELETE /upload/{upload_id}</code>) and retry with a fresh token</li>
-        <li>Tokens live in server memory &mdash; a VPS restart invalidates all active tokens</li>
+        <li>Tokens live in server memory, a VPS restart invalidates all active tokens</li>
       </ul>
       <p>Requests without a valid key or token return <code>401 Unauthorized</code>. The <code>GET /guide</code> and <code>GET /guide-ai</code> endpoints are public &middot; no authentication required.</p>
     </section>
@@ -259,7 +259,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
           <span class="path">/guide-ai</span>
           <span class="auth-badge">public</span>
         </div>
-        <p style="margin-top:0.5rem;font-size:0.85rem">Machine-readable JSON reference optimized for AI agents (LLMs, LangChain, MCP, etc.). Same content as this guide but structured for programmatic consumption &mdash; no HTML parsing required.</p>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Machine-readable JSON reference optimized for AI agents (LLMs, LangChain, MCP, etc.). Same content as this guide but structured for programmatic consumption, no HTML parsing required.</p>
       </div>
       <div class="endpoint">
         <div class="endpoint-header">
@@ -454,7 +454,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
 
       <h3>Endpoint parameters</h3>
 
-      <h4>POST /upload/init &mdash; JSON body</h4>
+      <h4>POST /upload/init (JSON body)</h4>
       <div class="table-wrap"><table>
         <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
         <tbody>
@@ -465,7 +465,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
       </table></div>
       <p>Response: <code>{ upload_id, chunk_size_recommended }</code></p>
 
-      <h4>POST /upload/chunk &mdash; multipart/form-data</h4>
+      <h4>POST /upload/chunk (multipart/form-data)</h4>
       <div class="note">Do <strong>not</strong> set <code>Content-Type: application/json</code> for this endpoint — the browser/fetch sets it automatically as <code>multipart/form-data</code> when you pass a <code>FormData</code> object.</div>
       <div class="table-wrap"><table>
         <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
@@ -477,7 +477,7 @@ _GUIDE_HTML = """<!DOCTYPE html>
       </table></div>
       <p>Response: <code>{ received, total }</code></p>
 
-      <h4>POST /upload/finalize &mdash; JSON body</h4>
+      <h4>POST /upload/finalize (JSON body)</h4>
       <div class="table-wrap"><table>
         <thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
         <tbody>
@@ -486,11 +486,11 @@ _GUIDE_HTML = """<!DOCTYPE html>
       </table></div>
       <p>Response: <code>{ job_id, status: "queued" }</code></p>
 
-      <h4>GET /status/{job_id} &mdash; no body</h4>
+      <h4>GET /status/{job_id} (no body)</h4>
       <p>Pass <code>X-API-Key</code> header only. Returns the full job state object (see <em>Status response</em> below).</p>
 
-      <h4>GET /download/{job_id} &mdash; no body</h4>
-      <p>Pass <code>X-API-Key</code> header only. Available only when <code>status === "done"</code>. Returns the compressed <code>video/mp4</code> file. The file is deleted from the server after transfer &mdash; do <strong>not</strong> use <code>window.location.href</code> (cannot send headers). Use <code>fetch</code> + blob instead (see JS example).</p>
+      <h4>GET /download/{job_id} (no body)</h4>
+      <p>Pass <code>X-API-Key</code> header only. Available only when <code>status === "done"</code>. Returns the compressed <code>video/mp4</code> file. The file is deleted from the server after transfer, do <strong>not</strong> use <code>window.location.href</code> (cannot send headers). Use <code>fetch</code> + blob instead (see JS example).</p>
 
       <h3>Job states</h3>
       <div class="table-wrap"><table>
@@ -605,10 +605,10 @@ async function compressVideo(file) {
     <section id="es-auth">
       <h2>Autenticaci&oacute;n</h2>
       <p>Los endpoints bajo <code>/api/v1/</code> soportan dos m&eacute;todos de autenticaci&oacute;n:</p>
-      <h3>API Key maestra &mdash; servidor a servidor</h3>
+      <h3>API Key maestra (servidor a servidor)</h3>
       <p>Usada por tu backend (ej. una funci&oacute;n serverless de Vercel). <strong>Nunca expongas esta clave en el navegador.</strong></p>
       <pre><code>X-API-Key: tu-clave-secreta</code></pre>
-      <h3>Token de sesi&oacute;n &mdash; llamadas directas desde el navegador</h3>
+      <h3>Token de sesi&oacute;n (llamadas directas desde el navegador)</h3>
       <p>Token de corta duraci&oacute;n (TTL de 2&nbsp;h) obtenido del lado del servidor via <code>POST /api/v1/auth/session-token</code> y enviado al navegador. Permite que el navegador llame al VPS directamente sin exponer la clave maestra.</p>
       <pre><code>X-Session-Token: &lt;token&gt;</code></pre>
       <h4>Ciclo de vida del token</h4>
@@ -616,7 +616,7 @@ async function compressVideo(file) {
         <li>V&aacute;lido por <strong>2 horas</strong> desde su emisi&oacute;n</li>
         <li>Renovar proactivamente ~12 min antes de que expire para evitar fallos a mitad de subida</li>
         <li>Si el token vence durante una subida, cancela el job (<code>DELETE /upload/{upload_id}</code>) y reintenta con un token nuevo</li>
-        <li>Los tokens viven en memoria del servidor &mdash; reiniciar el VPS invalida todos los tokens activos</li>
+        <li>Los tokens viven en memoria del servidor, reiniciar el VPS invalida todos los tokens activos</li>
       </ul>
       <p>Las peticiones sin clave o token v&aacute;lido devuelven <code>401 Unauthorized</code>. Los endpoints <code>GET /guide</code> y <code>GET /guide-ai</code> son p&uacute;blicos &middot; no requieren autenticaci&oacute;n.</p>
     </section>
@@ -637,7 +637,7 @@ async function compressVideo(file) {
           <span class="path">/guide-ai</span>
           <span class="auth-badge">p&uacute;blico</span>
         </div>
-        <p style="margin-top:0.5rem;font-size:0.85rem">Referencia JSON optimizada para agentes de IA (LLMs, LangChain, MCP, etc.). Mismo contenido que esta gu&iacute;a pero estructurado para consumo program&aacute;tico &mdash; sin necesidad de parsear HTML.</p>
+        <p style="margin-top:0.5rem;font-size:0.85rem">Referencia JSON optimizada para agentes de IA (LLMs, LangChain, MCP, etc.). Mismo contenido que esta gu&iacute;a pero estructurado para consumo program&aacute;tico, sin necesidad de parsear HTML.</p>
       </div>
       <div class="endpoint">
         <div class="endpoint-header">
@@ -827,7 +827,7 @@ async function compressVideo(file) {
 
       <h3>Par&aacute;metros de endpoints</h3>
 
-      <h4>POST /upload/init &mdash; JSON body</h4>
+      <h4>POST /upload/init (JSON body)</h4>
       <div class="table-wrap"><table>
         <thead><tr><th>Campo</th><th>Tipo</th><th>Requerido</th><th>Descripci&oacute;n</th></tr></thead>
         <tbody>
@@ -838,8 +838,8 @@ async function compressVideo(file) {
       </table></div>
       <p>Respuesta: <code>{ upload_id, chunk_size_recommended }</code></p>
 
-      <h4>POST /upload/chunk &mdash; multipart/form-data</h4>
-      <div class="note">No fijes <code>Content-Type: application/json</code> en este endpoint &mdash; el navegador/fetch lo establece autom&aacute;ticamente como <code>multipart/form-data</code> al pasar un objeto <code>FormData</code>.</div>
+      <h4>POST /upload/chunk (multipart/form-data)</h4>
+      <div class="note">No fijes <code>Content-Type: application/json</code> en este endpoint, el navegador/fetch lo establece autom&aacute;ticamente como <code>multipart/form-data</code> al pasar un objeto <code>FormData</code>.</div>
       <div class="table-wrap"><table>
         <thead><tr><th>Campo</th><th>Tipo</th><th>Requerido</th><th>Descripci&oacute;n</th></tr></thead>
         <tbody>
@@ -850,7 +850,7 @@ async function compressVideo(file) {
       </table></div>
       <p>Respuesta: <code>{ received, total }</code></p>
 
-      <h4>POST /upload/finalize &mdash; JSON body</h4>
+      <h4>POST /upload/finalize (JSON body)</h4>
       <div class="table-wrap"><table>
         <thead><tr><th>Campo</th><th>Tipo</th><th>Requerido</th><th>Descripci&oacute;n</th></tr></thead>
         <tbody>
@@ -859,11 +859,11 @@ async function compressVideo(file) {
       </table></div>
       <p>Respuesta: <code>{ job_id, status: "queued" }</code></p>
 
-      <h4>GET /status/{job_id} &mdash; sin body</h4>
+      <h4>GET /status/{job_id} (sin body)</h4>
       <p>Solo el header <code>X-API-Key</code>. Retorna el objeto completo del job (ver <em>Respuesta del endpoint de estado</em> m&aacute;s abajo).</p>
 
-      <h4>GET /download/{job_id} &mdash; sin body</h4>
-      <p>Solo el header <code>X-API-Key</code>. Disponible solo cuando <code>status === "done"</code>. Retorna el archivo comprimido <code>video/mp4</code>. El archivo se elimina tras la transferencia &mdash; <strong>no</strong> uses <code>window.location.href</code> (no puede enviar headers). Usa <code>fetch</code> + blob (ver ejemplo JS).</p>
+      <h4>GET /download/{job_id} (sin body)</h4>
+      <p>Solo el header <code>X-API-Key</code>. Disponible solo cuando <code>status === "done"</code>. Retorna el archivo comprimido <code>video/mp4</code>. El archivo se elimina tras la transferencia, <strong>no</strong> uses <code>window.location.href</code> (no puede enviar headers). Usa <code>fetch</code> + blob (ver ejemplo JS).</p>
 
       <h3>Estados del job</h3>
       <div class="table-wrap"><table>

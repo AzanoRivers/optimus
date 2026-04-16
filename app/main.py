@@ -2,8 +2,9 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import router as v1_router
@@ -26,6 +27,7 @@ async def lifespan(app: FastAPI):
     # ── Startup ───────────────────────────────────────────────────────────────
     purge_temp_root()
 
+    app.state.started_at = datetime.now(timezone.utc)
     executor = ThreadPoolExecutor(max_workers=_EXECUTOR_WORKERS)
     jobs: Dict[str, JobState] = {}
 
@@ -94,12 +96,19 @@ app.include_router(v1_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["status"])
-async def root() -> dict:
+async def root(request: Request) -> dict:
+    delta = datetime.now(timezone.utc) - request.app.state.started_at
+    total_seconds = int(delta.total_seconds())
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
     return {
         "name": settings.PROJECT_NAME,
         "version": settings.API_VERSION,
         "author": "AzanoRivers",
         "status": "ok",
+        "uptime": f"{days}d {hours}h {minutes}m {seconds}s",
+        "uptime_seconds": total_seconds,
     }
 
 
