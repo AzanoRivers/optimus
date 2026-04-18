@@ -86,9 +86,14 @@ if _cors_origins:
         allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["X-API-Key", "X-Session-Token", "Content-Type"],
         expose_headers=[
-            "X-Optimus-Status", "X-Optimus-Processed", "X-Optimus-Total",
-            "X-Optimus-Input-Size", "X-Optimus-Output-Size", "X-Optimus-Reduction-Pct",
-            "X-Vps-Skipped", "X-Vps-Warning",
+            "X-Optimus-Status",
+            "X-Optimus-Processed",
+            "X-Optimus-Total",
+            "X-Optimus-Input-Size",
+            "X-Optimus-Output-Size",
+            "X-Optimus-Reduction-Pct",
+            "X-Vps-Skipped",
+            "X-Vps-Warning",
         ],
     )
 
