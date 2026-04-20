@@ -5,6 +5,7 @@ import logging
 import shutil
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI
 
 from app.services.job_manager import (
@@ -220,6 +221,9 @@ async def video_worker(app: FastAPI) -> None:
             app.state.video_queue.task_done()
             continue
 
+        # Captured on compression success; drives the R2 upload below the semaphore.
+        _destination_url = None
+
         async with app.state.ffmpeg_semaphore:
             # Checkpoint 2: job was cancelled while waiting for the semaphore
             job = app.state.jobs.get(job_id)
@@ -263,6 +267,10 @@ async def video_worker(app: FastAPI) -> None:
                     out_size,
                 )
 
+                # Capture URL so the R2 upload runs after releasing the semaphore,
+                # allowing the next queued job to start compressing immediately.
+                _destination_url = job.destination_url
+
             except Exception as exc:
                 # If the job was cancelled while FFmpeg was running, the cancel
                 # endpoint already deleted the folder and removed the job from
@@ -278,5 +286,49 @@ async def video_worker(app: FastAPI) -> None:
                         error_msg=str(exc),
                     )
                     delete_upload_folder(job.upload_id)
+
+        # ── R2 direct upload (outside ffmpeg_semaphore) ───────────────────────
+        # The next queued job can start compressing while this file is pushed
+        # to R2.  Uses asyncio.to_thread so the disk read is non-blocking.
+        if _destination_url:
+            r2_path = upload_dir(job.upload_id) / "compressed" / "video.mp4"
+            r2_upload_ok = False
+            try:
+                file_bytes = await asyncio.to_thread(r2_path.read_bytes)
+                async with httpx.AsyncClient(timeout=300.0) as http:
+                    r2_resp = await http.put(
+                        _destination_url,
+                        content=file_bytes,
+                        headers={"Content-Type": "video/mp4"},
+                    )
+                r2_resp.raise_for_status()
+                # Signal R2 success BEFORE touching disk so the browser always
+                # sees file_deleted=True and uses the fast complete path.
+                update_job(app.state.jobs, job_id, file_deleted=True)
+                r2_upload_ok = True
+                logger.info(
+                    "Video job %s: pushed %d bytes directly to R2.",
+                    job_id,
+                    len(file_bytes),
+                )
+            except Exception as r2_exc:
+                logger.warning(
+                    "Video job %s: direct R2 upload failed (%s). "
+                    "File kept for legacy Vercel download.",
+                    job_id,
+                    r2_exc,
+                )
+
+            # Separate block: a disk error here must not shadow a successful R2 upload.
+            if r2_upload_ok:
+                try:
+                    delete_upload_folder(job.upload_id)
+                except Exception as del_exc:
+                    logger.warning(
+                        "Video job %s: local folder delete failed after R2 upload "
+                        "(%s). Periodic cleanup will handle it.",
+                        job_id,
+                        del_exc,
+                    )
 
         app.state.video_queue.task_done()

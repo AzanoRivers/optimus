@@ -31,6 +31,9 @@ class JobState:
     reduction_pct: float = 0.0
     error_msg: Optional[str] = None
     file_deleted: bool = False
+    # Presigned R2 PUT URL — when set, video_worker uploads compressed file
+    # directly to R2 instead of waiting for Vercel to pull it.
+    destination_url: Optional[str] = None
     # Reference to the active FFmpeg subprocess — set by compress_video_file,
     # cleared on completion. Used by the cancel endpoint to kill the process.
     # Typed as Any to avoid importing asyncio.subprocess at module level.
@@ -147,6 +150,9 @@ async def cleanup_jobs_loop(jobs: Dict[str, JobState]) -> None:
                 update_job(jobs, job_id, file_deleted=True)
 
             elif job.status == "done" and job.file_deleted and age > 1800:  # 30 min
+                # no-op if folder was already deleted; handles the edge case
+                # where the post-R2-upload disk delete failed.
+                delete_upload_folder(job.upload_id)
                 to_remove.append(job_id)
 
             elif job.status in ("failed", "expired") and age > 3600:  # 1 h

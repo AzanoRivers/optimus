@@ -16,7 +16,10 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from urllib.parse import urlparse
+
 from pydantic import BaseModel, field_validator
+from typing import Optional
 from starlette.background import BackgroundTask
 
 from app.services.job_manager import (
@@ -56,6 +59,7 @@ class InitRequest(BaseModel):
     filename: str
     total_size: int
     total_chunks: int
+    destination_url: Optional[str] = None
 
     @field_validator("filename")
     @classmethod
@@ -85,6 +89,27 @@ class InitRequest(BaseModel):
             raise ValueError("total_chunks must be at least 1.")
         if v > _MAX_CHUNKS:
             raise ValueError(f"total_chunks cannot exceed {_MAX_CHUNKS}.")
+        return v
+
+    @field_validator("destination_url")
+    @classmethod
+    def validate_destination_url(cls, v: Optional[str]) -> Optional[str]:
+        """Reject non-HTTPS and private/loopback addresses (SSRF prevention)."""
+        if v is None:
+            return v
+        try:
+            parsed = urlparse(v)
+        except Exception:
+            raise ValueError("destination_url is not a valid URL.")
+        if parsed.scheme != "https":
+            raise ValueError("destination_url must use HTTPS.")
+        host = (parsed.hostname or "").lower()
+        if not host:
+            raise ValueError("destination_url has no valid host.")
+        _BLOCKED = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+        _PRIVATE_PREFIXES = ("10.", "172.", "192.168.", "169.254.")
+        if host in _BLOCKED or any(host.startswith(p) for p in _PRIVATE_PREFIXES):
+            raise ValueError("destination_url must not point to an internal address.")
         return v
 
 
@@ -158,6 +183,7 @@ async def upload_init(body: InitRequest, request: Request) -> dict:
         job_id=job_id,
         upload_id=upload_id,
         status="uploading",
+        destination_url=body.destination_url,
     )
     request.app.state.jobs[job_id] = job
 
